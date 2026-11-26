@@ -61,6 +61,9 @@ private fun LydModelApp() {
     var nextId by remember { mutableLongStateOf(2L) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var status by remember { mutableStateOf("Ready to design") }
+    var toolsExpanded by remember { mutableStateOf(true) }
+    var fullScreen by remember { mutableStateOf(false) }
+    var panelWidth by remember { mutableFloatStateOf(290f) }
     val context = LocalContext.current
     val selected = objects.firstOrNull { it.id == selectedId }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/stl")) { uri ->
@@ -78,11 +81,30 @@ private fun LydModelApp() {
                 val wideLayout = maxWidth >= 700.dp || maxWidth > maxHeight
                 val compact = maxHeight < 520.dp
                 Column(Modifier.fillMaxSize()) {
+                    if (fullScreen) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            ModelViewport(objects, selectedId, zoom,
+                                { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
+                                { selectedId = it },
+                                { id, dx, dy -> objects = objects.map { obj ->
+                                    if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy) else obj
+                                } })
+                            Column(Modifier.align(Alignment.TopEnd).padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { fullScreen = false }) { Text("Exit focus") }
+                                Button(onClick = { fullScreen = false; toolsExpanded = true }) { Text("Show tools") }
+                            }
+                            WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
+                        }
+                    } else {
                     TopBar(
                         onUndo = { status = "Undo history is planned" },
                         onRedo = { status = "Redo history is planned" },
                         onExport = { exportLauncher.launch("lyd-model.stl") },
-                        compact = compact
+                        compact = compact,
+                        toolsExpanded = toolsExpanded,
+                        onToggleTools = { toolsExpanded = !toolsExpanded },
+                        onToggleFullscreen = { fullScreen = true }
                     )
                     if (wideLayout) {
                         Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -100,9 +122,16 @@ private fun LydModelApp() {
                                     WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
                                 }
                             }
-                            Column(Modifier.width(if (maxWidth < 900.dp) 260.dp else 310.dp)
-                                .fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                if (selected != null) Inspector(selected, { axis, value ->
+                            if (toolsExpanded) {
+                            Column(Modifier.width(panelWidth.dp.coerceAtMost(maxWidth * .48f))
+                                .fillMaxHeight().background(Color(0xFF1A2532), RoundedCornerShape(18.dp))
+                                .padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("TOOLS", color = Color.White, fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { toolsExpanded = false }) { Text("Hide") }
+                                }
+                                if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
                                     objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
                                         0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
                                     } }
@@ -120,8 +149,13 @@ private fun LydModelApp() {
                                     status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
                                 }, compact = compact)
                                 Spacer(Modifier.weight(1f))
+                                Text("PANEL WIDTH: " + panelWidth.roundToInt() + " dp",
+                                    color = Color(0xFF9BA9BB), fontSize = 9.sp)
+                                Slider(value = panelWidth, onValueChange = { panelWidth = it },
+                                    valueRange = 220f..360f)
                                 Text(status, color = Color(0xFF8292A6), fontSize = 11.sp,
                                     modifier = Modifier.padding(6.dp))
+                            }
                             }
                         }
                     } else {
@@ -147,13 +181,14 @@ private fun LydModelApp() {
                             val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
                             objects = objects + copy; selectedId = copy.id
                         }, compact = compact)
-                        ShapeTray(onAdd = { kind ->
+                        if (toolsExpanded) ShapeTray(onAdd = { kind ->
                             val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
                             objects = objects + obj; selectedId = obj.id
-                            status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
+                            status = kind.name.lowercase().replaceFirstChar { it.uppercase() } + " added"
                         }, compact = compact)
                         Text(status, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                             color = Color(0xFF8292A6), fontSize = 10.sp, maxLines = 1)
+                    }
                     }
                 }
             }
@@ -175,12 +210,19 @@ private fun WorkspaceHints(compact: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TopBar(onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit, compact: Boolean = false) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 3.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun TopBar(
+    onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit,
+    compact: Boolean = false, toolsExpanded: Boolean, onToggleTools: () -> Unit,
+    onToggleFullscreen: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 3.dp else 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = if (compact) 16.sp else 19.sp)
             Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
         }
+        TextButton(onClick = onToggleTools) { Text(if (toolsExpanded) "Hide tools" else "Show tools") }
+        TextButton(onClick = onToggleFullscreen) { Text("Focus") }
         IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
         IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
         Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 14.dp)) {
@@ -267,8 +309,8 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
 }
 
 @Composable
-private fun DimensionControl(label: String, value: Float, onChange: (Float) -> Unit) {
-    Column(Modifier.width(104.dp)) {
+private fun DimensionControl(label: String, value: Float, modifier: Modifier = Modifier, onChange: (Float) -> Unit) {
+    Column(modifier) {
         Text(label, color = Color(0xFF8EA0B5), fontSize = 10.sp)
         Slider(value = value.coerceIn(2f, 100f), onValueChange = onChange, valueRange = 2f..100f)
         Text("${value.roundToInt()} mm", color = Color.White, fontSize = 11.sp)
