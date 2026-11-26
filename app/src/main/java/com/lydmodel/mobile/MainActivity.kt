@@ -70,6 +70,7 @@ private fun LydModelApp() {
     var zoom by remember { mutableFloatStateOf(1f) }
     var status by remember { mutableStateOf("Ready to design") }
     var toolsExpanded by remember { mutableStateOf(true) }
+    var penMode by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var panelWidth by remember { mutableFloatStateOf(290f) }
     val context = LocalContext.current
@@ -98,7 +99,7 @@ private fun LydModelApp() {
                                 Spacer(Modifier.width(8.dp))
                                 Button(onClick = { fullScreen = false; toolsExpanded = true }) { Text("Show tools") }
                             }
-                            ModelViewport(objects, selectedId, zoom,
+                            ModelViewport(objects, selectedId, zoom, penMode,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
                                 { id, dx, dy, dz -> objects = objects.map { obj ->
@@ -117,7 +118,9 @@ private fun LydModelApp() {
                         toolsExpanded = toolsExpanded,
                         onToggleTools = { toolsExpanded = !toolsExpanded },
                         onToggleFullscreen = { fullScreen = true },
-                        landscape = wideLayout
+                        landscape = wideLayout,
+                        penMode = penMode,
+                        onTogglePenMode = { penMode = !penMode }
                     )
                     if (wideLayout) {
                         Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -126,7 +129,7 @@ private fun LydModelApp() {
                                 WorkspaceLabel(compact)
                                 Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
                                     .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
-                                    ModelViewport(objects, selectedId, zoom,
+                                    ModelViewport(objects, selectedId, zoom, penMode,
                                         { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                         { selectedId = it },
                                         { id, dx, dy, dz -> objects = objects.map {
@@ -179,7 +182,7 @@ private fun LydModelApp() {
                         WorkspaceLabel(compact)
                         Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)
                             .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
-                            ModelViewport(objects, selectedId, zoom,
+                            ModelViewport(objects, selectedId, zoom, penMode,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
                                 { id, dx, dy, dz -> objects = objects.map {
@@ -252,7 +255,8 @@ private fun WorkspaceHints(compact: Boolean, modifier: Modifier = Modifier) {
 private fun TopBar(
     onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit,
     compact: Boolean = false, toolsExpanded: Boolean, onToggleTools: () -> Unit,
-    onToggleFullscreen: () -> Unit, landscape: Boolean = false
+    onToggleFullscreen: () -> Unit, landscape: Boolean = false,
+    penMode: Boolean = false, onTogglePenMode: () -> Unit = {}
 ) {
     if (landscape) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
@@ -266,6 +270,10 @@ private fun TopBar(
             }
             TextButton(onClick = onToggleTools, contentPadding = PaddingValues(horizontal = 7.dp)) {
                 Text(if (toolsExpanded) "Hide tools" else "Show tools", maxLines = 1, fontSize = 12.sp)
+            }
+            TextButton(onClick = onTogglePenMode, contentPadding = PaddingValues(horizontal = 7.dp)) {
+                Text(if (penMode) "Pen: ON" else "Pen: OFF", maxLines = 1, fontSize = 12.sp,
+                    color = if (penMode) Color(0xFF55D6BE) else Color.LightGray)
             }
             TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 7.dp)) {
                 Text("Focus", fontSize = 12.sp)
@@ -299,6 +307,10 @@ private fun TopBar(
                 TextButton(onClick = onToggleTools, contentPadding = PaddingValues(horizontal = 5.dp)) {
                     Text(if (toolsExpanded) "Hide tools" else "Show tools", maxLines = 1)
                 }
+                TextButton(onClick = onTogglePenMode, contentPadding = PaddingValues(horizontal = 5.dp)) {
+                    Text(if (penMode) "Pen ON" else "Pen OFF",
+                        color = if (penMode) Color(0xFF55D6BE) else Color.LightGray)
+                }
                 TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 5.dp)) { Text("Focus") }
                 IconButton(onClick = onUndo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
                 IconButton(onClick = onRedo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
@@ -312,6 +324,10 @@ private fun TopBar(
                 Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
             }
             TextButton(onClick = onToggleTools) { Text(if (toolsExpanded) "Hide tools" else "Show tools") }
+            TextButton(onClick = onTogglePenMode) {
+                Text(if (penMode) "Pen ON" else "Pen OFF",
+                    color = if (penMode) Color(0xFF55D6BE) else Color.LightGray)
+            }
             TextButton(onClick = onToggleFullscreen) { Text("Focus") }
             IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
             IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
@@ -324,7 +340,7 @@ private fun TopBar(
 
 @Composable
 private fun ModelViewport(
-    objects: List<ModelObject>, selectedId: Long?, zoom: Float,
+    objects: List<ModelObject>, selectedId: Long?, zoom: Float, penMode: Boolean = false,
     onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float, Float) -> Unit,
     onResize: (Long, Int, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     showHints: Boolean = true
@@ -335,10 +351,10 @@ private fun ModelViewport(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
                 ModelGLSurfaceView(context, onSelect, onMove, onResize, onZoom).also {
-                    it.updateScene(objects, selectedId, cameraPreset, zoom)
+                    it.updateScene(objects, selectedId, cameraPreset, zoom, penMode)
                 }
             },
-            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom) }
+            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom, penMode) }
         )
         Row(Modifier.align(Alignment.TopStart).padding(8.dp)
             .horizontalScroll(rememberScrollState())
