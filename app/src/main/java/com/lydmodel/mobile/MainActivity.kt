@@ -73,57 +73,112 @@ private fun LydModelApp() {
     MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF55D6BE), secondary = Color(0xFF8EA7FF),
         background = Color(0xFF10151D), surface = Color(0xFF1A222D))) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFF10151D)) {
-            Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                TopBar(onUndo = { status = "Undo history is planned" },
-                    onRedo = { status = "Redo history is planned" },
-                    onExport = { exportLauncher.launch("lyd-model.stl") })
-                Text("UNTITLED DESIGN  •  MILLIMETRES", Modifier.padding(start = 18.dp, top = 12.dp),
-                    color = Color(0xFF9BA9BB), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp)
-                    .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
-                    ModelViewport(objects, selectedId, zoom, { zoom = (zoom * it).coerceIn(.45f, 2.8f) },
-                        { selectedId = it }, { id, dx, dy ->
-                            objects = objects.map { if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it }
-                        })
-                    Surface(Modifier.align(Alignment.TopStart).padding(12.dp),
-                        color = Color(0xCC202B39), shape = RoundedCornerShape(10.dp)) {
-                        Text("3D WORKSPACE", Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-                            color = Color(0xFFB8C7D9), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
+                val wideLayout = maxWidth >= 700.dp || maxWidth > maxHeight
+                val compact = maxHeight < 520.dp
+                Column(Modifier.fillMaxSize()) {
+                    TopBar(
+                        onUndo = { status = "Undo history is planned" },
+                        onRedo = { status = "Redo history is planned" },
+                        onExport = { exportLauncher.launch("lyd-model.stl") },
+                        compact = compact
+                    )
+                    if (wideLayout) {
+                        Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f).fillMaxHeight()) {
+                                WorkspaceLabel(compact)
+                                Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
+                                    .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
+                                    ModelViewport(objects, selectedId, zoom,
+                                        { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
+                                        { selectedId = it },
+                                        { id, dx, dy -> objects = objects.map {
+                                            if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                        } })
+                                    WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
+                                }
+                            }
+                            Column(Modifier.width(if (maxWidth < 900.dp) 260.dp else 310.dp)
+                                .fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (selected != null) Inspector(selected, { axis, value ->
+                                    objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
+                                        0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
+                                    } }
+                                }, {
+                                    objects = objects.filterNot { it.id == selected.id }
+                                    selectedId = objects.lastOrNull()?.id
+                                }, {
+                                    val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
+                                    objects = objects + copy
+                                    selectedId = copy.id
+                                }, compact = compact)
+                                ShapeTray(onAdd = { kind ->
+                                    val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
+                                    objects = objects + obj; selectedId = obj.id
+                                    status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
+                                }, compact = compact)
+                                Spacer(Modifier.weight(1f))
+                                Text(status, color = Color(0xFF8292A6), fontSize = 11.sp,
+                                    modifier = Modifier.padding(6.dp))
+                            }
+                        }
+                    } else {
+                        WorkspaceLabel(compact)
+                        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)
+                            .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
+                            ModelViewport(objects, selectedId, zoom,
+                                { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
+                                { selectedId = it },
+                                { id, dx, dy -> objects = objects.map {
+                                    if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                } })
+                            WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
+                        }
+                        if (selected != null) Inspector(selected, { axis, value ->
+                            objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
+                                0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
+                            } }
+                        }, {
+                            objects = objects.filterNot { it.id == selected.id }
+                            selectedId = objects.lastOrNull()?.id
+                        }, {
+                            val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
+                            objects = objects + copy; selectedId = copy.id
+                        }, compact = compact)
+                        ShapeTray(onAdd = { kind ->
+                            val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
+                            objects = objects + obj; selectedId = obj.id
+                            status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
+                        }, compact = compact)
+                        Text(status, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                            color = Color(0xFF8292A6), fontSize = 10.sp, maxLines = 1)
                     }
-                    Text("Drag to move  •  Pinch to zoom", Modifier.align(Alignment.BottomCenter).padding(12.dp),
-                        color = Color(0xFF8D9CAF), fontSize = 11.sp)
                 }
-                if (selected != null) Inspector(selected, { axis, value ->
-                    objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
-                        0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
-                    } }
-                }, {
-                    objects = objects.filterNot { it.id == selected.id }
-                    selectedId = objects.lastOrNull()?.id
-                }, {
-                    val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
-                    objects = objects + copy
-                    selectedId = copy.id
-                })
-                ShapeTray { kind ->
-                    val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
-                    objects = objects + obj
-                    selectedId = obj.id
-                    status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
-                }
-                Text(status, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
-                    color = Color(0xFF8292A6), fontSize = 11.sp)
             }
         }
     }
 }
 
 @Composable
-private fun TopBar(onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun WorkspaceLabel(compact: Boolean) {
+    Text("UNTITLED DESIGN  •  MILLIMETRES",
+        Modifier.padding(start = 8.dp, top = if (compact) 2.dp else 8.dp),
+        color = Color(0xFF9BA9BB), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun WorkspaceHints(compact: Boolean, modifier: Modifier = Modifier) {
+    Text(if (compact) "Drag to move • Pinch to zoom" else "Drag an object to move  •  Pinch to zoom",
+        modifier.padding(10.dp), color = Color(0xFF8D9CAF), fontSize = 10.sp)
+}
+
+@Composable
+private fun TopBar(onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit, compact: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 3.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = 19.sp)
-            Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 9.sp, letterSpacing = 2.sp)
+            Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = if (compact) 16.sp else 19.sp)
+            Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
         }
         IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
         IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
@@ -194,7 +249,7 @@ private fun project(x: Float, y: Float, z: Float, size: androidx.compose.ui.geom
 }
 
 @Composable
-private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit) {
+private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, compact: Boolean = false) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -204,9 +259,9 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF8B8B)) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DimensionControl("W", obj.sx) { onSize(0, it) }
-            DimensionControl("D", obj.sy) { onSize(1, it) }
-            DimensionControl("H", obj.sz) { onSize(2, it) }
+            DimensionControl("W", obj.sx, Modifier.weight(1f)) { onSize(0, it) }
+            DimensionControl("D", obj.sy, Modifier.weight(1f)) { onSize(1, it) }
+            DimensionControl("H", obj.sz, Modifier.weight(1f)) { onSize(2, it) }
         }
     }
 }
@@ -221,14 +276,14 @@ private fun DimensionControl(label: String, value: Float, onChange: (Float) -> U
 }
 
 @Composable
-private fun ShapeTray(onAdd: (ShapeKind) -> Unit) {
+private fun ShapeTray(onAdd: (ShapeKind) -> Unit, compact: Boolean = false) {
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Text("ADD SHAPE", Modifier.padding(start = 18.dp, bottom = 8.dp), color = Color(0xFF9BA9BB),
+        Text("ADD SHAPE", Modifier.padding(start = 8.dp, bottom = if (compact) 3.dp else 8.dp), color = Color(0xFF9BA9BB),
             fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             items(ShapeKind.entries) { kind ->
                 Surface(onClick = { onAdd(kind) }, color = Color(0xFF202C3A), shape = RoundedCornerShape(13.dp)) {
-                    Row(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = if (compact) 8.dp else 13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Add, null, tint = Color(0xFF55D6BE), modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(5.dp))
                         Text(kind.name.lowercase().replaceFirstChar { it.uppercase() }, color = Color.White, fontSize = 12.sp)
