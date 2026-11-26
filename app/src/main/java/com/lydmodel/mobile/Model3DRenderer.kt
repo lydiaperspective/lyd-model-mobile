@@ -21,7 +21,7 @@ internal class ModelGLSurfaceView(
     context: Context,
     private val onSelect: (Long?) -> Unit,
     private val onMove: (Long, Float, Float) -> Unit,
-    private val onResize: (Long, Float, Float, Float) -> Unit,
+    private val onResize: (Long, Int, Float, Float, Float) -> Unit,
     private val onZoom: (Float) -> Unit
 ) : GLSurfaceView(context) {
     private val sceneRenderer = ModelSceneRenderer()
@@ -74,7 +74,9 @@ internal class ModelGLSurfaceView(
                     if (objectId != null && touchedResizeCorner != null) {
                         val scale = 0.12f / sceneRenderer.currentZoom()
                         val signs = sceneRenderer.resizeSigns(touchedResizeCorner!!)
-                        onResize(objectId, signs[0] * dx * scale, signs[1] * dx * scale, -signs[2] * dy * scale)
+                        val world = sceneRenderer.screenDragToWorld(dx, dy)
+                        val dz = -dy * scale
+                        onResize(objectId, touchedResizeCorner!!, world.first * 0.55f, world.second * 0.55f, dz)
                     } else if (objectId != null) {
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
                         onMove(objectId, world.first, world.second)
@@ -170,24 +172,25 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
 
     fun currentZoom(): Float = zoom
 
-    fun resizeSigns(corner: Int): FloatArray = floatArrayOf(
-        if (corner and 1 == 0) -1f else 1f,
-        if (corner and 2 == 0) -1f else 1f,
-        if (corner and 4 == 0) -1f else 1f
-    )
+    fun resizeSigns(handle: Int): FloatArray = when (handle) {
+        in 0..7 -> floatArrayOf(if (handle and 1 == 0) -1f else 1f, if (handle and 2 == 0) -1f else 1f, if (handle and 4 == 0) -1f else 1f)
+        8 -> floatArrayOf(-1f,0f,0f); 9 -> floatArrayOf(1f,0f,0f)
+        10 -> floatArrayOf(0f,-1f,0f); 11 -> floatArrayOf(0f,1f,0f)
+        12 -> floatArrayOf(0f,0f,-1f); else -> floatArrayOf(0f,0f,1f)
+    }
 
     fun pickResizeHandle(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Int? {
         val item = objects.firstOrNull { it.id == selectedId } ?: return null
         if (viewWidth <= 0 || viewHeight <= 0) return null
-        val corners = arrayOf(
-            floatArrayOf(item.x-item.sx/2,item.y-item.sy/2,item.z),
-            floatArrayOf(item.x+item.sx/2,item.y-item.sy/2,item.z),
-            floatArrayOf(item.x-item.sx/2,item.y+item.sy/2,item.z),
-            floatArrayOf(item.x+item.sx/2,item.y+item.sy/2,item.z),
-            floatArrayOf(item.x-item.sx/2,item.y-item.sy/2,item.z+item.sz),
-            floatArrayOf(item.x+item.sx/2,item.y-item.sy/2,item.z+item.sz),
-            floatArrayOf(item.x-item.sx/2,item.y+item.sy/2,item.z+item.sz),
-            floatArrayOf(item.x+item.sx/2,item.y+item.sy/2,item.z+item.sz)
+        val x0=item.x-item.sx/2; val x1=item.x+item.sx/2
+        val y0=item.y-item.sy/2; val y1=item.y+item.sy/2
+        val z0=item.z; val z1=item.z+item.sz
+        val handles = arrayOf(
+            floatArrayOf(x0,y0,z0), floatArrayOf(x1,y0,z0), floatArrayOf(x0,y1,z0), floatArrayOf(x1,y1,z0),
+            floatArrayOf(x0,y0,z1), floatArrayOf(x1,y0,z1), floatArrayOf(x0,y1,z1), floatArrayOf(x1,y1,z1),
+            floatArrayOf(x0,item.y,item.z+item.sz/2), floatArrayOf(x1,item.y,item.z+item.sz/2),
+            floatArrayOf(item.x,y0,item.z+item.sz/2), floatArrayOf(item.x,y1,item.z+item.sz/2),
+            floatArrayOf(item.x,item.y,z0), floatArrayOf(item.x,item.y,z1)
         )
         val eye = cameraEye()
         val look = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
@@ -195,13 +198,13 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],0f,0f,18f,up[0],up[1],up[2])
         Matrix.perspectiveM(proj,0,45f,viewWidth.toFloat()/viewHeight,.1f,5000f)
         Matrix.multiplyMM(vp,0,proj,0,look,0)
-        return corners.mapIndexedNotNull { index, p ->
+        return handles.mapIndexedNotNull { index, p ->
             val clip=FloatArray(4); Matrix.multiplyMV(clip,0,vp,0,floatArrayOf(p[0],p[1],p[2],1f),0)
             if (clip[3] <= 0f) null else {
                 val sx=(clip[0]/clip[3]+1f)*.5f*viewWidth
                 val sy=(1f-clip[1]/clip[3])*.5f*viewHeight
                 val distance=hypot(sx-x,sy-y)
-                if (distance <= 25f) index to distance else null
+                if (distance <= 29f) index to distance else null
             }
         }.minByOrNull { it.second }?.first
     }
@@ -325,6 +328,12 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
 
         val dots = mutableListOf<Float>()
         corners.forEach { addVertex(dots, it, floatArrayOf(0f,0f,1f)) }
+        val faceCenters = listOf(
+            floatArrayOf(x0,item.y,z0+item.sz/2), floatArrayOf(x1,item.y,z0+item.sz/2),
+            floatArrayOf(item.x,y0,z0+item.sz/2), floatArrayOf(item.x,y1,z0+item.sz/2),
+            floatArrayOf(item.x,item.y,z0), floatArrayOf(item.x,item.y,z1)
+        )
+        faceCenters.forEach { addVertex(dots, it, floatArrayOf(0f,0f,1f)) }
         drawMesh(createMesh(dots.toFloatArray(), GLES20.GL_POINTS), floatArrayOf(.95f,.98f,1f,1f), false)
 
         val cx = item.x; val cy = item.y; val cz = item.z + item.sz / 2f
