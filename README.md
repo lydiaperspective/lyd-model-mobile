@@ -14,7 +14,9 @@ A touchscreen-first Android 3D modelling app with a hardware-accelerated OpenGL 
 - Perspective camera, directional shading and a 3D workplane grid.
 - Camera direction presets: top, bottom, front, back, left, right and home/isometric.
 - Select and drag objects on the workplane; perspective projection updates as the camera rotates.
-- Adjust width, depth and height in millimetres.
+- Enter exact width, depth and height values in millimetres using numeric fields.
+- Use one-millimetre X/Y/Z position nudges for controlled object placement.
+- Selected objects display a highlighted bounding outline, corner edit dots, and colour-coded XYZ axis guides.
 - Duplicate and delete objects.
 - Export combined geometry as an ASCII STL using Android's document picker.
 
@@ -22,7 +24,7 @@ A touchscreen-first Android 3D modelling app with a hardware-accelerated OpenGL 
 Open this repository in Android Studio with JDK 17 and Android Gradle Plugin 8.9.1. Allow Gradle sync, then run the app on an Android device or emulator with API 26+.
 
 ## Roadmap
-1. Camera pan, draggable view cube, grid snapping, and improved object hit-testing.
+1. Make the on-canvas XYZ move arrows and corner resize handles directly draggable; add camera pan, a draggable view cube, grid snapping, and improved object hit-testing.
 2. Undo/redo command history and native project save/open.
 3. Boolean union/subtract/intersect and mesh validation.
 4. Import STL/OBJ, grouping, alignment, precise numeric transforms and measurement tools.
