@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -322,12 +324,12 @@ private fun DimensionControl(label: String, value: Float, modifier: Modifier = M
             value = text,
             onValueChange = { raw ->
                 text = raw.filter { it.isDigit() || it == '.' }.take(8)
-                text.toFloatOrNull()?.takeIf { it in 0.1f..1000f }?.let(onChange)
             },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { text.toFloatOrNull()?.takeIf { it in 0.1f..1000f }?.let(onChange) }),
             suffix = { Text("mm", color = Color(0xFF8EA0B5), fontSize = 10.sp) }
         )
     }
