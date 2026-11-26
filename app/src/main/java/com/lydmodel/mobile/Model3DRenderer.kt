@@ -20,7 +20,8 @@ import kotlin.math.*
 internal class ModelGLSurfaceView(
     context: Context,
     private val onSelect: (Long?) -> Unit,
-    private val onMove: (Long, Float, Float) -> Unit
+    private val onMove: (Long, Float, Float) -> Unit,
+    private val onZoom: (Float) -> Unit
 ) : GLSurfaceView(context) {
     private val sceneRenderer = ModelSceneRenderer()
     private var previousX = 0f
@@ -34,6 +35,7 @@ internal class ModelGLSurfaceView(
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 sceneRenderer.zoomBy(detector.scaleFactor)
+                onZoom(detector.scaleFactor)
                 return true
             }
         })
@@ -168,7 +170,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val look = FloatArray(16)
         val proj = FloatArray(16)
         val vp = FloatArray(16)
-        Matrix.setLookAtM(look, 0, eye[0], eye[1], eye[2], target[0], target[1], target[2], 0f, 0f, 1f)
+        val up = if (abs(pitch) > 85f) floatArrayOf(0f, 1f, 0f) else floatArrayOf(0f, 0f, 1f)
+        Matrix.setLookAtM(look, 0, eye[0], eye[1], eye[2], target[0], target[1], target[2], up[0], up[1], up[2])
         Matrix.perspectiveM(proj, 0, 45f, viewWidth.toFloat() / viewHeight, .1f, 5000f)
         Matrix.multiplyMM(vp, 0, proj, 0, look, 0)
         return objects.asReversed().firstOrNull { item ->
@@ -223,7 +226,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glUseProgram(program)
         val eye = cameraEye()
-        Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], 0f, 0f, 18f, 0f, 0f, 1f)
+        val up = if (abs(pitch) > 85f) floatArrayOf(0f, 1f, 0f) else floatArrayOf(0f, 0f, 1f)
+        Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], 0f, 0f, 18f, up[0], up[1], up[2])
         Matrix.multiplyMM(viewProjection, 0, projection, 0, view, 0)
         GLES20.glUniform3f(lightHandle, -.4f, -.5f, 1f)
 
