@@ -133,6 +133,13 @@ private fun LydModelApp() {
                                         { selectedId = it },
                                         { id, dx, dy -> objects = objects.map {
                                             if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                        } },
+                                        { id, dx, dy, dz -> objects = objects.map { obj ->
+                                            if (obj.id == id) obj.copy(
+                                                sx = (obj.sx + dx).coerceAtLeast(0.1f),
+                                                sy = (obj.sy + dy).coerceAtLeast(0.1f),
+                                                sz = (obj.sz + dz).coerceAtLeast(0.1f)
+                                            ) else obj
                                         } })
                                 }
                             }
