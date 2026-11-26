@@ -257,7 +257,6 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         targetZ = item.z + item.sz / 2f
         val extent = max(item.sx, max(item.sy, item.sz))
         cameraDistance = (extent * 3.4f).coerceIn(65f, 1200f)
-        zoom = 1f
         return true
     }
 
@@ -376,7 +375,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val eye = cameraEye()
         val look = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
         val up = if (abs(pitch) > 85f) floatArrayOf(0f,1f,0f) else floatArrayOf(0f,0f,1f)
-        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],0f,0f,18f,up[0],up[1],up[2])
+        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],targetX,targetY,targetZ,up[0],up[1],up[2])
         Matrix.perspectiveM(proj,0,45f,viewWidth.toFloat()/viewHeight,.1f,5000f)
         Matrix.multiplyMM(vp,0,proj,0,look,0)
         return handles.mapIndexedNotNull { index, p ->
