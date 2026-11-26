@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -364,11 +366,15 @@ private fun ModelViewport(
         }
 
         Row(Modifier.align(Alignment.TopStart).padding(8.dp)
+            .horizontalScroll(rememberScrollState())
             .background(Color(0xDD182331), RoundedCornerShape(12.dp)).padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { yaw = 0f; pitch = 89f }) { Text("Top", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { yaw = 0f; pitch = 8f }) { Text("Front", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 180f; pitch = 8f }) { Text("Back", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { yaw = 90f; pitch = 8f }) { Text("Right", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 270f; pitch = 8f }) { Text("Left", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 0f; pitch = 5f }) { Text("Bottom", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { yaw = 45f; pitch = 32f }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
         }
         Text("DRAG EMPTY SPACE TO ORBIT", Modifier.align(Alignment.BottomEnd).padding(10.dp),
