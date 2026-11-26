@@ -319,7 +319,7 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
 private fun DimensionControl(label: String, value: Float, modifier: Modifier = Modifier, onChange: (Float) -> Unit) {
     var text by remember(value) { mutableStateOf(if (value % 1f == 0f) value.toInt().toString() else value.toString()) }
     Column(modifier) {
-        Text(label, color = Color(0xFF8EA0B5), fontSize = 10.sp)
+        Text("$label (mm)", color = Color(0xFF8EA0B5), fontSize = 10.sp)
         OutlinedTextField(
             value = text,
             onValueChange = { raw ->
@@ -330,7 +330,6 @@ private fun DimensionControl(label: String, value: Float, modifier: Modifier = M
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { text.toFloatOrNull()?.takeIf { it in 0.1f..1000f }?.let(onChange) }),
-            suffix = { Text("mm", color = Color(0xFF8EA0B5), fontSize = 10.sp) }
         )
     }
 }
