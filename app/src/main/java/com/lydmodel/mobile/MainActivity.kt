@@ -100,8 +100,8 @@ private fun LydModelApp() {
                             ModelViewport(objects, selectedId, zoom,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
-                                { id, dx, dy -> objects = objects.map { obj ->
-                                    if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy) else obj
+                                { id, dx, dy, dz -> objects = objects.map { obj ->
+                                    if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy, z = obj.z + dz) else obj
                                 } },
                                 { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
@@ -127,8 +127,8 @@ private fun LydModelApp() {
                                     ModelViewport(objects, selectedId, zoom,
                                         { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                         { selectedId = it },
-                                        { id, dx, dy -> objects = objects.map {
-                                            if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                        { id, dx, dy, dz -> objects = objects.map {
+                                            if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy, z = it.z + dz) else it
                                         } },
                                         { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
@@ -184,8 +184,8 @@ private fun LydModelApp() {
                             ModelViewport(objects, selectedId, zoom,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
-                                { id, dx, dy -> objects = objects.map {
-                                    if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                { id, dx, dy, dz -> objects = objects.map {
+                                    if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy, z = it.z + dz) else it
                                 } },
                                 { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
@@ -301,7 +301,7 @@ private fun TopBar(
 @Composable
 private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float,
-    onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit,
+    onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float, Float) -> Unit,
     onResize: (Long, Int, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     showHints: Boolean = true
 ) {
