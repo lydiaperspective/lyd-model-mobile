@@ -78,7 +78,8 @@ private fun LydModelApp() {
         background = Color(0xFF10151D), surface = Color(0xFF1A222D))) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFF10151D)) {
             BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
-                val wideLayout = maxWidth >= 700.dp || maxWidth > maxHeight
+                val availableWidth = maxWidth
+                val wideLayout = availableWidth >= 700.dp || availableWidth > maxHeight
                 val compact = maxHeight < 520.dp
                 Column(Modifier.fillMaxSize()) {
                     if (fullScreen) {
@@ -123,7 +124,7 @@ private fun LydModelApp() {
                                 }
                             }
                             if (toolsExpanded) {
-                            Column(Modifier.width(panelWidth.dp.coerceAtMost(maxWidth * .48f))
+                            Column(Modifier.width(panelWidth.dp.coerceAtMost(availableWidth * .48f))
                                 .fillMaxHeight().background(Color(0xFF1A2532), RoundedCornerShape(18.dp))
                                 .padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
