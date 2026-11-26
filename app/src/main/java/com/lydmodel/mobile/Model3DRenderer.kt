@@ -1,0 +1,376 @@
+package com.lydmodel.mobile
+
+import android.content.Context
+import android.opengl.GLES20
+import android.opengl.GLSurfaceView
+import android.opengl.Matrix
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
+import kotlin.math.*
+
+/**
+ * Hardware-accelerated 3D viewport. Geometry is rendered as triangles with a depth buffer;
+ * camera orbit and zoom are applied to a real perspective projection.
+ */
+internal class ModelGLSurfaceView(
+    context: Context,
+    private val onSelect: (Long?) -> Unit
+) : GLSurfaceView(context) {
+    private val sceneRenderer = ModelSceneRenderer()
+    private var previousX = 0f
+    private var previousY = 0f
+    private var activePointers = 0
+    private var downX = 0f
+    private var downY = 0f
+    private var moved = false
+    private val scaleDetector = ScaleGestureDetector(context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                sceneRenderer.zoomBy(detector.scaleFactor)
+                return true
+            }
+        })
+
+    init {
+        setEGLContextClientVersion(2)
+        setRenderer(sceneRenderer)
+        renderMode = RENDERMODE_CONTINUOUSLY
+        preserveEGLContextOnPause = true
+    }
+
+    fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float) {
+        sceneRenderer.updateScene(objects, selectedId, preset, zoom)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        scaleDetector.onTouchEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                activePointers = 1
+                previousX = event.x; previousY = event.y
+                downX = event.x; downY = event.y
+                moved = false
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
+            MotionEvent.ACTION_MOVE -> {
+                if (!scaleDetector.isInProgress && event.pointerCount == 1) {
+                    val dx = event.x - previousX
+                    val dy = event.y - previousY
+                    if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
+                    sceneRenderer.orbitBy(dx * .45f, dy * .38f)
+                }
+                previousX = event.x; previousY = event.y
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                activePointers = event.pointerCount - 1
+                if (activePointers == 1) {
+                    val index = if (event.actionIndex == 0) 1 else 0
+                    previousX = event.getX(index); previousY = event.getY(index)
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!moved && !scaleDetector.isInProgress) {
+                    val picked = sceneRenderer.pick(event.x, event.y, width, height)
+                    post { onSelect(picked) }
+                }
+                activePointers = 0
+                performClick()
+            }
+            MotionEvent.ACTION_CANCEL -> activePointers = 0
+        }
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+}
+
+private class ModelSceneRenderer : GLSurfaceView.Renderer {
+    @Volatile private var objects: List<ModelObject> = emptyList()
+    @Volatile private var selectedId: Long? = null
+    @Volatile private var preset: Int = 6
+    @Volatile private var zoom: Float = 1f
+    @Volatile private var yaw = 45f
+    @Volatile private var pitch = 32f
+    private var program = 0
+    private var positionHandle = 0
+    private var normalHandle = 0
+    private var mvpHandle = 0
+    private var colorHandle = 0
+    private var lightHandle = 0
+    private val projection = FloatArray(16)
+    private val view = FloatArray(16)
+    private val model = FloatArray(16)
+    private val mvp = FloatArray(16)
+    private val viewProjection = FloatArray(16)
+    private var width = 1
+    private var height = 1
+    private var cameraDistance = 340f
+    private val meshes = mutableMapOf<ShapeKind, GpuMesh>()
+    private lateinit var grid: GpuMesh
+
+    fun updateScene(items: List<ModelObject>, selected: Long?, viewPreset: Int, currentZoom: Float) {
+        objects = items.toList()
+        selectedId = selected
+        if (preset != viewPreset) {
+            preset = viewPreset
+            when (viewPreset) {
+                0 -> { yaw = 0f; pitch = 89f }
+                1 -> { yaw = 0f; pitch = 0f }
+                2 -> { yaw = 180f; pitch = 0f }
+                3 -> { yaw = 90f; pitch = 0f }
+                4 -> { yaw = 270f; pitch = 0f }
+                5 -> { yaw = 0f; pitch = -89f }
+                else -> { yaw = 45f; pitch = 32f }
+            }
+        }
+        zoom = currentZoom.coerceIn(.35f, 3.5f)
+    }
+
+    fun orbitBy(dx: Float, dy: Float) {
+        yaw = (yaw + dx) % 360f
+        pitch = (pitch - dy).coerceIn(-89f, 89f)
+    }
+
+    fun zoomBy(factor: Float) {
+        zoom = (zoom * factor).coerceIn(.25f, 5f)
+    }
+
+    fun pick(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Long? {
+        if (viewWidth <= 0 || viewHeight <= 0) return null
+        val target = floatArrayOf(0f, 0f, 18f)
+        val eye = cameraEye()
+        val look = FloatArray(16)
+        val proj = FloatArray(16)
+        val vp = FloatArray(16)
+        Matrix.setLookAtM(look, 0, eye[0], eye[1], eye[2], target[0], target[1], target[2], 0f, 0f, 1f)
+        Matrix.perspectiveM(proj, 0, 45f, viewWidth.toFloat() / viewHeight, .1f, 5000f)
+        Matrix.multiplyMM(vp, 0, proj, 0, look, 0)
+        return objects.asReversed().firstOrNull { item ->
+            val point = floatArrayOf(item.x, item.y, item.z + item.sz / 2f, 1f)
+            val clip = FloatArray(4)
+            Matrix.multiplyMV(clip, 0, vp, 0, point, 0)
+            if (clip[3] <= 0f) false else {
+                val sx = (clip[0] / clip[3] + 1f) * .5f * viewWidth
+                val sy = (1f - clip[1] / clip[3]) * .5f * viewHeight
+                val radius = max(item.sx, max(item.sy, item.sz)) * 1.2f * zoom
+                hypot(sx - x, sy - y) < max(28f, radius)
+            }
+        }?.id
+    }
+
+    private fun cameraEye(): FloatArray {
+        val yawRad = Math.toRadians(yaw.toDouble())
+        val pitchRad = Math.toRadians(pitch.toDouble())
+        val distance = cameraDistance / zoom
+        return floatArrayOf(
+            (distance * cos(pitchRad) * sin(yawRad)).toFloat(),
+            (-distance * cos(pitchRad) * cos(yawRad)).toFloat(),
+            18f + (distance * sin(pitchRad)).toFloat()
+        )
+    }
+
+    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        GLES20.glClearColor(.075f, .095f, .125f, 1f)
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST)
+        GLES20.glDepthFunc(GLES20.GL_LEQUAL)
+        GLES20.glEnable(GLES20.GL_CULL_FACE)
+        GLES20.glCullFace(GLES20.GL_BACK)
+        program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
+        positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
+        normalHandle = GLES20.glGetAttribLocation(program, "aNormal")
+        mvpHandle = GLES20.glGetUniformLocation(program, "uMvp")
+        colorHandle = GLES20.glGetUniformLocation(program, "uColor")
+        lightHandle = GLES20.glGetUniformLocation(program, "uLight")
+        meshes[ShapeKind.CUBE] = createMesh(cubeVertices())
+        meshes[ShapeKind.SPHERE] = createMesh(sphereVertices())
+        meshes[ShapeKind.CYLINDER] = createMesh(cylinderVertices())
+        grid = createMesh(gridVertices(), GLES20.GL_LINES)
+    }
+
+    override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
+        width = w.coerceAtLeast(1); height = h.coerceAtLeast(1)
+        GLES20.glViewport(0, 0, width, height)
+        Matrix.perspectiveM(projection, 0, 45f, width.toFloat() / height, .1f, 5000f)
+    }
+
+    override fun onDrawFrame(gl: GL10?) {
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+        GLES20.glUseProgram(program)
+        val eye = cameraEye()
+        Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], 0f, 0f, 18f, 0f, 0f, 1f)
+        Matrix.multiplyMM(viewProjection, 0, projection, 0, view, 0)
+        GLES20.glUniform3f(lightHandle, -.4f, -.5f, 1f)
+
+        Matrix.setIdentityM(model, 0)
+        Matrix.multiplyMM(mvp, 0, viewProjection, 0, model, 0)
+        drawMesh(grid, floatArrayOf(.15f, .20f, .26f, 1f), false)
+
+        objects.forEach { item ->
+            Matrix.setIdentityM(model, 0)
+            Matrix.translateM(model, 0, item.x, item.y, item.z + item.sz / 2f)
+            Matrix.scaleM(model, 0, item.sx, item.sy, item.sz)
+            Matrix.multiplyMM(mvp, 0, viewProjection, 0, model, 0)
+            val base = when (item.kind) {
+                ShapeKind.CUBE -> floatArrayOf(.28f, .48f, .91f, 1f)
+                ShapeKind.SPHERE -> floatArrayOf(.68f, .43f, .90f, 1f)
+                ShapeKind.CYLINDER -> floatArrayOf(.24f, .72f, .63f, 1f)
+            }
+            if (item.id == selectedId) {
+                base[0] = (base[0] * 1.18f).coerceAtMost(1f)
+                base[1] = (base[1] * 1.18f).coerceAtMost(1f)
+                base[2] = (base[2] * 1.18f).coerceAtMost(1f)
+            }
+            drawMesh(meshes[item.kind] ?: return@forEach, base, true)
+        }
+    }
+
+    private fun drawMesh(mesh: GpuMesh, color: FloatArray, lit: Boolean) {
+        GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvp, 0)
+        GLES20.glUniform4fv(colorHandle, 1, color, 0)
+        GLES20.glEnableVertexAttribArray(positionHandle)
+        GLES20.glEnableVertexAttribArray(normalHandle)
+        mesh.vertices.position(0)
+        GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 24, mesh.vertices)
+        mesh.vertices.position(3)
+        GLES20.glVertexAttribPointer(normalHandle, 3, GLES20.GL_FLOAT, false, 24, mesh.vertices)
+        if (!lit) GLES20.glDisable(GLES20.GL_CULL_FACE) else GLES20.glEnable(GLES20.GL_CULL_FACE)
+        GLES20.glDrawArrays(mesh.mode, 0, mesh.count)
+        GLES20.glEnable(GLES20.GL_CULL_FACE)
+        GLES20.glDisableVertexAttribArray(positionHandle)
+        GLES20.glDisableVertexAttribArray(normalHandle)
+    }
+
+    private data class GpuMesh(val vertices: FloatBuffer, val count: Int, val mode: Int)
+
+    private fun createMesh(values: FloatArray, mode: Int = GLES20.GL_TRIANGLES): GpuMesh {
+        val buffer = ByteBuffer.allocateDirect(values.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buffer.put(values).position(0)
+        return GpuMesh(buffer, values.size / 6, mode)
+    }
+
+    private fun createProgram(vertex: String, fragment: String): Int {
+        fun shader(type: Int, source: String): Int {
+            val id = GLES20.glCreateShader(type)
+            GLES20.glShaderSource(id, source)
+            GLES20.glCompileShader(id)
+            val status = IntArray(1)
+            GLES20.glGetShaderiv(id, GLES20.GL_COMPILE_STATUS, status, 0)
+            check(status[0] == GLES20.GL_TRUE) { GLES20.glGetShaderInfoLog(id) }
+            return id
+        }
+        val vs = shader(GLES20.GL_VERTEX_SHADER, vertex)
+        val fs = shader(GLES20.GL_FRAGMENT_SHADER, fragment)
+        val id = GLES20.glCreateProgram()
+        GLES20.glAttachShader(id, vs); GLES20.glAttachShader(id, fs)
+        GLES20.glLinkProgram(id)
+        val status = IntArray(1)
+        GLES20.glGetProgramiv(id, GLES20.GL_LINK_STATUS, status, 0)
+        check(status[0] == GLES20.GL_TRUE) { GLES20.glGetProgramInfoLog(id) }
+        GLES20.glDeleteShader(vs); GLES20.glDeleteShader(fs)
+        return id
+    }
+
+    private fun cubeVertices(): FloatArray {
+        val faces = listOf(
+            floatArrayOf(0f,0f,-1f) to listOf(floatArrayOf(-.5f,-.5f,-.5f),floatArrayOf(-.5f,.5f,-.5f),floatArrayOf(.5f,.5f,-.5f),floatArrayOf(.5f,-.5f,-.5f)),
+            floatArrayOf(0f,0f,1f) to listOf(floatArrayOf(-.5f,-.5f,.5f),floatArrayOf(.5f,-.5f,.5f),floatArrayOf(.5f,.5f,.5f),floatArrayOf(-.5f,.5f,.5f)),
+            floatArrayOf(0f,-1f,0f) to listOf(floatArrayOf(-.5f,-.5f,-.5f),floatArrayOf(.5f,-.5f,-.5f),floatArrayOf(.5f,-.5f,.5f),floatArrayOf(-.5f,-.5f,.5f)),
+            floatArrayOf(1f,0f,0f) to listOf(floatArrayOf(.5f,-.5f,-.5f),floatArrayOf(.5f,.5f,-.5f),floatArrayOf(.5f,.5f,.5f),floatArrayOf(.5f,-.5f,.5f)),
+            floatArrayOf(0f,1f,0f) to listOf(floatArrayOf(.5f,.5f,-.5f),floatArrayOf(-.5f,.5f,-.5f),floatArrayOf(-.5f,.5f,.5f),floatArrayOf(.5f,.5f,.5f)),
+            floatArrayOf(-1f,0f,0f) to listOf(floatArrayOf(-.5f,.5f,-.5f),floatArrayOf(-.5f,-.5f,-.5f),floatArrayOf(-.5f,-.5f,.5f),floatArrayOf(-.5f,.5f,.5f))
+        )
+        val out = mutableListOf<Float>()
+        faces.forEach { (n, q) ->
+            listOf(0,1,2,0,2,3).forEach { i ->
+                out.addAll(q[i].toList()); out.addAll(n.toList())
+            }
+        }
+        return out.toFloatArray()
+    }
+
+    private fun sphereVertices(): FloatArray {
+        val out = mutableListOf<Float>()
+        val lat = 20; val lon = 32
+        fun point(i: Int, j: Int): FloatArray {
+            val p = PI * i / lat; val t = 2.0 * PI * j / lon
+            val x = (cos(t) * sin(p)).toFloat()
+            val y = (sin(t) * sin(p)).toFloat()
+            val z = cos(p).toFloat()
+            return floatArrayOf(x,y,z)
+        }
+        for (i in 0 until lat) for (j in 0 until lon) {
+            val a = point(i,j); val b = point(i+1,j); val c = point(i+1,j+1); val d = point(i,j+1)
+            addVertex(out,a,a); addVertex(out,b,b); addVertex(out,c,c)
+            addVertex(out,a,a); addVertex(out,c,c); addVertex(out,d,d)
+        }
+        return out.toFloatArray()
+    }
+
+    private fun cylinderVertices(): FloatArray {
+        val out = mutableListOf<Float>()
+        val steps = 40
+        for (i in 0 until steps) {
+            val a = 2.0 * PI * i / steps; val b = 2.0 * PI * (i+1) / steps
+            val p0 = floatArrayOf(cos(a).toFloat(), sin(a).toFloat(), -.5f)
+            val p1 = floatArrayOf(cos(b).toFloat(), sin(b).toFloat(), -.5f)
+            val p2 = floatArrayOf(cos(b).toFloat(), sin(b).toFloat(), .5f)
+            val p3 = floatArrayOf(cos(a).toFloat(), sin(a).toFloat(), .5f)
+            val n0 = floatArrayOf(p0[0],p0[1],0f); val n1 = floatArrayOf(p1[0],p1[1],0f)
+            addVertex(out,p0,n0); addVertex(out,p1,n1); addVertex(out,p2,n1)
+            addVertex(out,p0,n0); addVertex(out,p2,n1); addVertex(out,p3,n0)
+            val bottom = floatArrayOf(0f,0f,-1f); val top = floatArrayOf(0f,0f,1f)
+            addVertex(out,floatArrayOf(0f,0f,-.5f),bottom); addVertex(out,p1,bottom); addVertex(out,p0,bottom)
+            addVertex(out,floatArrayOf(0f,0f,.5f),top); addVertex(out,p3,top); addVertex(out,p2,top)
+        }
+        return out.toFloatArray()
+    }
+
+    private fun gridVertices(): FloatArray {
+        val out = mutableListOf<Float>()
+        for (i in -20..20) {
+            val v = i * 10f
+            addVertex(out,floatArrayOf(v,-200f,0f),floatArrayOf(0f,0f,1f))
+            addVertex(out,floatArrayOf(v,200f,0f),floatArrayOf(0f,0f,1f))
+            addVertex(out,floatArrayOf(-200f,v,0f),floatArrayOf(0f,0f,1f))
+            addVertex(out,floatArrayOf(200f,v,0f),floatArrayOf(0f,0f,1f))
+        }
+        return out.toFloatArray()
+    }
+
+    private fun addVertex(out: MutableList<Float>, p: FloatArray, n: FloatArray) {
+        out.add(p[0]); out.add(p[1]); out.add(p[2])
+        out.add(n[0]); out.add(n[1]); out.add(n[2])
+    }
+
+    companion object {
+        private const val VERTEX_SHADER = """
+            uniform mat4 uMvp;
+            attribute vec3 aPosition;
+            attribute vec3 aNormal;
+            varying vec3 vNormal;
+            void main() {
+                gl_Position = uMvp * vec4(aPosition, 1.0);
+                vNormal = aNormal;
+            }
+        """
+        private const val FRAGMENT_SHADER = """
+            precision mediump float;
+            uniform vec4 uColor;
+            uniform vec3 uLight;
+            varying vec3 vNormal;
+            void main() {
+                float diffuse = max(dot(normalize(vNormal), normalize(uLight)), 0.0);
+                float lighting = 0.38 + diffuse * 0.62;
+                gl_FragColor = vec4(uColor.rgb * lighting, uColor.a);
+            }
+        """
+    }
+}
