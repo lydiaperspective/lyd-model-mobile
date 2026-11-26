@@ -20,7 +20,7 @@ import kotlin.math.*
 internal class ModelGLSurfaceView(
     context: Context,
     private val onSelect: (Long?) -> Unit,
-    private val onMove: (Long, Float, Float) -> Unit,
+    private val onMove: (Long, Float, Float, Float) -> Unit,
     private val onResize: (Long, Int, Float, Float, Float) -> Unit,
     private val onZoom: (Float) -> Unit
 ) : GLSurfaceView(context) {
@@ -33,6 +33,7 @@ internal class ModelGLSurfaceView(
     private var moved = false
     private var touchedObject: Long? = null
     private var touchedResizeCorner: Int? = null
+    private var touchedMoveAxis: Int? = null
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -63,6 +64,7 @@ internal class ModelGLSurfaceView(
                 moved = false
                 touchedObject = sceneRenderer.pick(event.x, event.y, width, height)
                 touchedResizeCorner = sceneRenderer.pickResizeHandle(event.x, event.y, width, height)
+                touchedMoveAxis = if (touchedResizeCorner == null) sceneRenderer.pickMoveAxis(event.x, event.y, width, height) else null
             }
             MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
             MotionEvent.ACTION_MOVE -> {
@@ -77,9 +79,13 @@ internal class ModelGLSurfaceView(
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
                         val dz = -dy * scale
                         onResize(objectId, touchedResizeCorner!!, world.first * 0.55f, world.second * 0.55f, dz)
+                    } else if (objectId != null && touchedMoveAxis != null) {
+                        val delta = sceneRenderer.axisDragDelta(touchedMoveAxis!!, dx, dy, width, height)
+                        onMove(objectId, delta[0], delta[1], delta[2])
                     } else if (objectId != null) {
+                        // Body dragging remains restricted to the workplane (XY); it never changes height.
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
-                        onMove(objectId, world.first, world.second)
+                        onMove(objectId, world.first, world.second, 0f)
                     } else {
                         sceneRenderer.orbitBy(dx * .45f, dy * .38f)
                     }
@@ -101,9 +107,10 @@ internal class ModelGLSurfaceView(
                 activePointers = 0
                 touchedObject = null
                 touchedResizeCorner = null
+                touchedMoveAxis = null
                 performClick()
             }
-            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null }
+            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null }
         }
         return true
     }
@@ -170,6 +177,50 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         return wx.toFloat() to wy.toFloat()
     }
 
+
+    private fun projectPoint(point: FloatArray, viewWidth: Int, viewHeight: Int): FloatArray? {
+        val eye = cameraEye()
+        val look = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
+        val up = if (abs(pitch) > 85f) floatArrayOf(0f,1f,0f) else floatArrayOf(0f,0f,1f)
+        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],0f,0f,18f,up[0],up[1],up[2])
+        Matrix.perspectiveM(proj,0,45f,viewWidth.toFloat()/viewHeight,.1f,5000f)
+        Matrix.multiplyMM(vp,0,proj,0,look,0)
+        val clip=FloatArray(4); Matrix.multiplyMV(clip,0,vp,0,floatArrayOf(point[0],point[1],point[2],1f),0)
+        if (clip[3] <= 0f) return null
+        return floatArrayOf((clip[0]/clip[3]+1f)*.5f*viewWidth,(1f-clip[1]/clip[3])*.5f*viewHeight)
+    }
+
+    fun pickMoveAxis(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Int? {
+        val item=objects.firstOrNull { it.id==selectedId } ?: return null
+        if(viewWidth<=0 || viewHeight<=0) return null
+        val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
+        val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
+        val origin=projectPoint(floatArrayOf(cx,cy,cz),viewWidth,viewHeight) ?: return null
+        val ends=arrayOf(floatArrayOf(cx+reach,cy,cz),floatArrayOf(cx,cy+reach,cz),floatArrayOf(cx,cy,cz+reach))
+        return ends.mapIndexedNotNull { axis,p ->
+            val end=projectPoint(p,viewWidth,viewHeight) ?: return@mapIndexedNotNull null
+            val vx=end[0]-origin[0]; val vy=end[1]-origin[1]
+            val len2=vx*vx+vy*vy
+            if(len2<100f) return@mapIndexedNotNull null
+            val t=(((x-origin[0])*vx+(y-origin[1])*vy)/len2).coerceIn(0f,1f)
+            val dist=hypot(x-(origin[0]+t*vx),y-(origin[1]+t*vy))
+            if(t>.12f && dist<22f) axis to dist else null
+        }.minByOrNull { it.second }?.first
+    }
+
+    fun axisDragDelta(axis: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): FloatArray {
+        val item=objects.firstOrNull { it.id==selectedId } ?: return floatArrayOf(0f,0f,0f)
+        if(viewWidth<=0 || viewHeight<=0) return floatArrayOf(0f,0f,0f)
+        val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
+        val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
+        val origin=projectPoint(floatArrayOf(cx,cy,cz),viewWidth,viewHeight) ?: return floatArrayOf(0f,0f,0f)
+        val endPoint=when(axis) { 0->floatArrayOf(cx+reach,cy,cz); 1->floatArrayOf(cx,cy+reach,cz); else->floatArrayOf(cx,cy,cz+reach) }
+        val end=projectPoint(endPoint,viewWidth,viewHeight) ?: return floatArrayOf(0f,0f,0f)
+        val vx=end[0]-origin[0]; val vy=end[1]-origin[1]; val len2=vx*vx+vy*vy
+        if(len2<100f) return floatArrayOf(0f,0f,0f)
+        val amount=((dx*vx+dy*vy)/len2)*reach
+        return when(axis) { 0->floatArrayOf(amount,0f,0f); 1->floatArrayOf(0f,amount,0f); else->floatArrayOf(0f,0f,amount) }
+    }
     fun currentZoom(): Float = zoom
 
     fun resizeSigns(handle: Int): FloatArray = when (handle) {
