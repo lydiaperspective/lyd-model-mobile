@@ -117,6 +117,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     private var mvpHandle = 0
     private var colorHandle = 0
     private var lightHandle = 0
+    private var pointSizeHandle = 0
     private val projection = FloatArray(16)
     private val view = FloatArray(16)
     private val model = FloatArray(16)
@@ -210,6 +211,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         mvpHandle = GLES20.glGetUniformLocation(program, "uMvp")
         colorHandle = GLES20.glGetUniformLocation(program, "uColor")
         lightHandle = GLES20.glGetUniformLocation(program, "uLight")
+        pointSizeHandle = GLES20.glGetUniformLocation(program, "uPointSize")
         meshes[ShapeKind.CUBE] = createMesh(cubeVertices())
         meshes[ShapeKind.SPHERE] = createMesh(sphereVertices())
         meshes[ShapeKind.CYLINDER] = createMesh(cylinderVertices())
@@ -277,7 +279,6 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
 
         val dots = mutableListOf<Float>()
         corners.forEach { addVertex(dots, it, floatArrayOf(0f,0f,1f)) }
-        GLES20.glPointSize(13f)
         drawMesh(createMesh(dots.toFloatArray(), GLES20.GL_POINTS), floatArrayOf(.95f,.98f,1f,1f), false)
 
         val cx = item.x; val cy = item.y; val cz = item.z + item.sz / 2f
@@ -289,7 +290,6 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             drawMesh(createMesh(line.toFloatArray(), GLES20.GL_LINES), color, false)
             val point = mutableListOf<Float>()
             addVertex(point, end, floatArrayOf(0f,0f,1f))
-            GLES20.glPointSize(15f)
             drawMesh(createMesh(point.toFloatArray(), GLES20.GL_POINTS), color, false)
         }
         axisLine(floatArrayOf(cx + reach,cy,cz), floatArrayOf(1f,.28f,.28f,1f))
@@ -301,6 +301,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     private fun drawMesh(mesh: GpuMesh, color: FloatArray, lit: Boolean) {
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvp, 0)
         GLES20.glUniform4fv(colorHandle, 1, color, 0)
+        GLES20.glUniform1f(pointSizeHandle, if (mesh.mode == GLES20.GL_POINTS) 14f else 1f)
         GLES20.glEnableVertexAttribArray(positionHandle)
         GLES20.glEnableVertexAttribArray(normalHandle)
         mesh.vertices.position(0)
@@ -424,6 +425,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             varying vec3 vNormal;
             void main() {
                 gl_Position = uMvp * vec4(aPosition, 1.0);
+                gl_PointSize = uPointSize;
                 vNormal = aNormal;
             }
         """
@@ -431,6 +433,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             precision mediump float;
             uniform vec4 uColor;
             uniform vec3 uLight;
+            uniform float uPointSize;
             varying vec3 vNormal;
             void main() {
                 float diffuse = max(dot(normalize(vNormal), normalize(uLight)), 0.0);
