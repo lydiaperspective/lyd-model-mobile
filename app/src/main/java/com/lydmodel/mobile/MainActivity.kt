@@ -302,7 +302,7 @@ private fun TopBar(
 private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float,
     onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit,
-    onResize: (Long, Float, Float, Float) -> Unit = { _, _, _, _ -> },
+    onResize: (Long, Int, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     showHints: Boolean = true
 ) {
     var cameraPreset by remember { mutableIntStateOf(6) }
