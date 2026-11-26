@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -146,6 +148,12 @@ private fun LydModelApp() {
                                     val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
                                     objects = objects + copy
                                     selectedId = copy.id
+                                }, { axis, amount ->
+                                    objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
+                                        0 -> o.copy(x = o.x + amount)
+                                        1 -> o.copy(y = o.y + amount)
+                                        else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
+                                    } }
                                 }, compact = compact)
                                 ShapeTray(onAdd = { kind ->
                                     val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
@@ -184,6 +192,12 @@ private fun LydModelApp() {
                         }, {
                             val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
                             objects = objects + copy; selectedId = copy.id
+                        }, { axis, amount ->
+                            objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
+                                0 -> o.copy(x = o.x + amount)
+                                1 -> o.copy(y = o.y + amount)
+                                else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
+                            } }
                         }, compact = compact)
                         if (toolsExpanded) ShapeTray(onAdd = { kind ->
                             val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
@@ -270,7 +284,7 @@ private fun ModelViewport(
 }
 
 @Composable
-private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, compact: Boolean = false) {
+private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -279,20 +293,43 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
             IconButton(onClick = onDuplicate, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ContentCopy, "Duplicate", tint = Color(0xFFB5C6DA)) }
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF8B8B)) }
         }
+        Text("SIZE  •  MILLIMETRES", color = Color(0xFF8EA0B5), fontSize = 10.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DimensionControl("W", obj.sx, Modifier.weight(1f)) { onSize(0, it) }
-            DimensionControl("D", obj.sy, Modifier.weight(1f)) { onSize(1, it) }
-            DimensionControl("H", obj.sz, Modifier.weight(1f)) { onSize(2, it) }
+            DimensionControl("Width", obj.sx, Modifier.weight(1f)) { onSize(0, it) }
+            DimensionControl("Depth", obj.sy, Modifier.weight(1f)) { onSize(1, it) }
+            DimensionControl("Height", obj.sz, Modifier.weight(1f)) { onSize(2, it) }
         }
+        Divider(color = Color(0xFF344252), modifier = Modifier.padding(vertical = 5.dp))
+        Text("MOVE  •  1 MM NUDGE", color = Color(0xFF8EA0B5), fontSize = 10.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            listOf("X" to 0, "Y" to 1, "Z" to 2).forEach { (axis, index) ->
+                Text(axis, color = Color.White, fontSize = 11.sp)
+                OutlinedButton(onClick = { onNudge(index, -1f) }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("−") }
+                OutlinedButton(onClick = { onNudge(index, 1f) }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("+") }
+            }
+        }
+        Text("Position: X ${obj.x.toInt()}  •  Y ${obj.y.toInt()}  •  Z ${obj.z.toInt()} mm",
+            color = Color(0xFF9BA9BB), fontSize = 10.sp)
     }
 }
 
 @Composable
 private fun DimensionControl(label: String, value: Float, modifier: Modifier = Modifier, onChange: (Float) -> Unit) {
+    var text by remember(value) { mutableStateOf(if (value % 1f == 0f) value.toInt().toString() else value.toString()) }
     Column(modifier) {
         Text(label, color = Color(0xFF8EA0B5), fontSize = 10.sp)
-        Slider(value = value.coerceIn(2f, 100f), onValueChange = onChange, valueRange = 2f..100f)
-        Text("${value.roundToInt()} mm", color = Color.White, fontSize = 11.sp)
+        OutlinedTextField(
+            value = text,
+            onValueChange = { raw ->
+                text = raw.filter { it.isDigit() || it == '.' }.take(8)
+                text.toFloatOrNull()?.takeIf { it in 0.1f..1000f }?.let(onChange)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            suffix = { Text("mm", color = Color(0xFF8EA0B5), fontSize = 10.sp) }
+        )
     }
 }
 
