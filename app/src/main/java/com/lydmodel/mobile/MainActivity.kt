@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -195,7 +196,7 @@ private fun ModelViewport(
 ) {
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     var dragId by remember { mutableStateOf<Long?>(null) }
-    Canvas(Modifier.fillMaxSize()
+    Canvas(Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
         .pointerInput(objects, canvasSize, zoom) {
             detectTapGestures { point ->
                 val hit = objects.asReversed().firstOrNull { obj ->
@@ -214,7 +215,6 @@ private fun ModelViewport(
         }
         .pointerInput(Unit) { detectTransformGestures { _, _, scale, _ -> onZoom(scale) } }
     ) {
-        canvasSize = size
         val center = Offset(size.width / 2f, size.height * .56f)
         for (i in -12..12) {
             drawLine(Color(0xFF273444), project(i * 10f, -120f, 0f, size, zoom),
