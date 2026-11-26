@@ -115,7 +115,8 @@ private fun LydModelApp() {
                         compact = compact,
                         toolsExpanded = toolsExpanded,
                         onToggleTools = { toolsExpanded = !toolsExpanded },
-                        onToggleFullscreen = { fullScreen = true }
+                        onToggleFullscreen = { fullScreen = true },
+                        landscape = wideLayout
                     )
                     if (wideLayout) {
                         Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -136,9 +137,10 @@ private fun LydModelApp() {
                                 }
                             }
                             if (toolsExpanded) {
-                            Column(Modifier.width(panelWidth.dp.coerceAtMost(availableWidth * .48f))
+                            Column(Modifier.width((availableWidth * .32f).coerceIn(280.dp, 360.dp))
                                 .fillMaxHeight().background(Color(0xFF1A2532), RoundedCornerShape(18.dp))
-                                .padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                .verticalScroll(rememberScrollState()).padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("TOOLS", color = Color.White, fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -167,11 +169,6 @@ private fun LydModelApp() {
                                     objects = objects + obj; selectedId = obj.id
                                     status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
                                 }, compact = compact)
-                                Spacer(Modifier.weight(1f))
-                                Text("PANEL WIDTH: " + panelWidth.roundToInt() + " dp",
-                                    color = Color(0xFF9BA9BB), fontSize = 9.sp)
-                                Slider(value = panelWidth, onValueChange = { panelWidth = it },
-                                    valueRange = 220f..360f)
                                 Text(status, color = Color(0xFF8292A6), fontSize = 11.sp,
                                     modifier = Modifier.padding(6.dp))
                             }
@@ -255,9 +252,36 @@ private fun WorkspaceHints(compact: Boolean, modifier: Modifier = Modifier) {
 private fun TopBar(
     onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit,
     compact: Boolean = false, toolsExpanded: Boolean, onToggleTools: () -> Unit,
-    onToggleFullscreen: () -> Unit
+    onToggleFullscreen: () -> Unit, landscape: Boolean = false
 ) {
-    if (compact) {
+    if (landscape) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black,
+                    fontSize = 17.sp, maxLines = 1)
+                Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE),
+                    fontSize = 7.sp, letterSpacing = 1.3.sp, maxLines = 1)
+            }
+            TextButton(onClick = onToggleTools, contentPadding = PaddingValues(horizontal = 7.dp)) {
+                Text(if (toolsExpanded) "Hide tools" else "Show tools", maxLines = 1, fontSize = 12.sp)
+            }
+            TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 7.dp)) {
+                Text("Focus", fontSize = 12.sp)
+            }
+            IconButton(onClick = onUndo, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray, modifier = Modifier.size(19.dp))
+            }
+            IconButton(onClick = onRedo, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray, modifier = Modifier.size(19.dp))
+            }
+            Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)) {
+                Icon(Icons.Default.FileDownload, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp)); Text("STL", fontSize = 12.sp)
+            }
+        }
+    } else if (compact) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
