@@ -21,6 +21,7 @@ internal class ModelGLSurfaceView(
     context: Context,
     private val onSelect: (Long?) -> Unit,
     private val onMove: (Long, Float, Float) -> Unit,
+    private val onResize: (Long, Float, Float, Float) -> Unit,
     private val onZoom: (Float) -> Unit
 ) : GLSurfaceView(context) {
     private val sceneRenderer = ModelSceneRenderer()
@@ -31,6 +32,7 @@ internal class ModelGLSurfaceView(
     private var downY = 0f
     private var moved = false
     private var touchedObject: Long? = null
+    private var touchedResizeCorner: Int? = null
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -60,6 +62,7 @@ internal class ModelGLSurfaceView(
                 downX = event.x; downY = event.y
                 moved = false
                 touchedObject = sceneRenderer.pick(event.x, event.y, width, height)
+                touchedResizeCorner = sceneRenderer.pickResizeHandle(event.x, event.y, width, height)
             }
             MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
             MotionEvent.ACTION_MOVE -> {
@@ -68,7 +71,11 @@ internal class ModelGLSurfaceView(
                     val dy = event.y - previousY
                     if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
                     val objectId = touchedObject
-                    if (objectId != null) {
+                    if (objectId != null && touchedResizeCorner != null) {
+                        val scale = 0.12f / sceneRenderer.currentZoom()
+                        val signs = sceneRenderer.resizeSigns(touchedResizeCorner!!)
+                        onResize(objectId, signs[0] * dx * scale, signs[1] * dx * scale, -signs[2] * dy * scale)
+                    } else if (objectId != null) {
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
                         onMove(objectId, world.first, world.second)
                     } else {
@@ -91,9 +98,10 @@ internal class ModelGLSurfaceView(
                 }
                 activePointers = 0
                 touchedObject = null
+                touchedResizeCorner = null
                 performClick()
             }
-            MotionEvent.ACTION_CANCEL -> activePointers = 0
+            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null }
         }
         return true
     }
@@ -158,6 +166,44 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val wx = (dx * cos(a) - dy * sin(a)) * scale
         val wy = (-dx * sin(a) - dy * cos(a)) * scale
         return wx.toFloat() to wy.toFloat()
+    }
+
+    fun currentZoom(): Float = zoom
+
+    fun resizeSigns(corner: Int): FloatArray = floatArrayOf(
+        if (corner and 1 == 0) -1f else 1f,
+        if (corner and 2 == 0) -1f else 1f,
+        if (corner and 4 == 0) -1f else 1f
+    )
+
+    fun pickResizeHandle(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Int? {
+        val item = objects.firstOrNull { it.id == selectedId } ?: return null
+        if (viewWidth <= 0 || viewHeight <= 0) return null
+        val corners = arrayOf(
+            floatArrayOf(item.x-item.sx/2,item.y-item.sy/2,item.z),
+            floatArrayOf(item.x+item.sx/2,item.y-item.sy/2,item.z),
+            floatArrayOf(item.x-item.sx/2,item.y+item.sy/2,item.z),
+            floatArrayOf(item.x+item.sx/2,item.y+item.sy/2,item.z),
+            floatArrayOf(item.x-item.sx/2,item.y-item.sy/2,item.z+item.sz),
+            floatArrayOf(item.x+item.sx/2,item.y-item.sy/2,item.z+item.sz),
+            floatArrayOf(item.x-item.sx/2,item.y+item.sy/2,item.z+item.sz),
+            floatArrayOf(item.x+item.sx/2,item.y+item.sy/2,item.z+item.sz)
+        )
+        val eye = cameraEye()
+        val look = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
+        val up = if (abs(pitch) > 85f) floatArrayOf(0f,1f,0f) else floatArrayOf(0f,0f,1f)
+        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],0f,0f,18f,up[0],up[1],up[2])
+        Matrix.perspectiveM(proj,0,45f,viewWidth.toFloat()/viewHeight,.1f,5000f)
+        Matrix.multiplyMM(vp,0,proj,0,look,0)
+        return corners.mapIndexedNotNull { index, p ->
+            val clip=FloatArray(4); Matrix.multiplyMV(clip,0,vp,0,floatArrayOf(p[0],p[1],p[2],1f),0)
+            if (clip[3] <= 0f) null else {
+                val sx=(clip[0]/clip[3]+1f)*.5f*viewWidth
+                val sy=(1f-clip[1]/clip[3])*.5f*viewHeight
+                val distance=hypot(sx-x,sy-y)
+                if (distance <= 25f) index to distance else null
+            }
+        }.minByOrNull { it.second }?.first
     }
 
     fun zoomBy(factor: Float) {
