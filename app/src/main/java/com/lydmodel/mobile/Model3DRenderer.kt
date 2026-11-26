@@ -5,6 +5,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.view.MotionEvent
+import android.view.GestureDetector
 import android.view.ScaleGestureDetector
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -36,6 +37,17 @@ internal class ModelGLSurfaceView(
     private var touchedMoveAxis: Int? = null
     @Volatile private var penMode = false
     private var activeInputIsStylus = false
+    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent): Boolean = true
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            val id = sceneRenderer.pick(e.x, e.y, width, height)
+            if (id != null) {
+                sceneRenderer.focusOn(id)
+                post { onSelect(id) }
+            }
+            return id != null
+        }
+    })
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -58,6 +70,7 @@ internal class ModelGLSurfaceView(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        gestureDetector.onTouchEvent(event)
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -74,9 +87,22 @@ internal class ModelGLSurfaceView(
                 touchedMoveAxis = if (canEdit && activeInputIsStylus && touchedResizeCorner == null)
                     sceneRenderer.pickMoveAxis(event.x, event.y, width, height) else null
             }
-            MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                activePointers = event.pointerCount
+                val focus = pointerFocus(event)
+                previousX = focus.first
+                previousY = focus.second
+                moved = true
+            }
             MotionEvent.ACTION_MOVE -> {
-                if (!scaleDetector.isInProgress && event.pointerCount == 1) {
+                if (event.pointerCount >= 2) {
+                    val focus = pointerFocus(event)
+                    val panDx = focus.first - previousX
+                    val panDy = focus.second - previousY
+                    if (abs(panDx) + abs(panDy) > 1f) sceneRenderer.panBy(panDx, panDy, height)
+                    previousX = focus.first
+                    previousY = focus.second
+                } else if (!scaleDetector.isInProgress && event.pointerCount == 1) {
                     val dx = event.x - previousX
                     val dy = event.y - previousY
                     if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
@@ -121,6 +147,9 @@ internal class ModelGLSurfaceView(
                 if (activePointers == 1) {
                     val index = if (event.actionIndex == 0) 1 else 0
                     previousX = event.getX(index); previousY = event.getY(index)
+                } else if (activePointers >= 2) {
+                    val focus = pointerFocus(event, event.actionIndex)
+                    previousX = focus.first; previousY = focus.second
                 }
             }
             MotionEvent.ACTION_UP -> {
@@ -138,6 +167,19 @@ internal class ModelGLSurfaceView(
             MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null; activeInputIsStylus = false }
         }
         return true
+    }
+
+    private fun pointerFocus(event: MotionEvent, skipIndex: Int = -1): Pair<Float, Float> {
+        var sumX = 0f
+        var sumY = 0f
+        var count = 0
+        for (i in 0 until event.pointerCount) {
+            if (i == skipIndex) continue
+            sumX += event.getX(i)
+            sumY += event.getY(i)
+            count++
+        }
+        return if (count == 0) event.x to event.y else sumX / count to sumY / count
     }
 
     override fun performClick(): Boolean {
