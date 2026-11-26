@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,10 +60,11 @@ private fun LydModelApp() {
     var nextId by remember { mutableLongStateOf(2L) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var status by remember { mutableStateOf("Ready to design") }
+    val context = LocalContext.current
     val selected = objects.firstOrNull { it.id == selectedId }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/stl")) { uri ->
         if (uri != null) runCatching {
-            contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(StlExporter.export(objects)) }
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(StlExporter.export(objects)) }
                 ?: error("Could not open destination")
         }.onSuccess { status = "STL exported successfully" }
             .onFailure { status = "Export failed: ${it.localizedMessage}" }
