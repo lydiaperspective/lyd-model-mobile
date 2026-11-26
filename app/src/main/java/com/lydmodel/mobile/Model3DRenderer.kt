@@ -19,7 +19,8 @@ import kotlin.math.*
  */
 internal class ModelGLSurfaceView(
     context: Context,
-    private val onSelect: (Long?) -> Unit
+    private val onSelect: (Long?) -> Unit,
+    private val onMove: (Long, Float, Float) -> Unit
 ) : GLSurfaceView(context) {
     private val sceneRenderer = ModelSceneRenderer()
     private var previousX = 0f
@@ -28,6 +29,7 @@ internal class ModelGLSurfaceView(
     private var downX = 0f
     private var downY = 0f
     private var moved = false
+    private var touchedObject: Long? = null
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -55,6 +57,7 @@ internal class ModelGLSurfaceView(
                 previousX = event.x; previousY = event.y
                 downX = event.x; downY = event.y
                 moved = false
+                touchedObject = sceneRenderer.pick(event.x, event.y, width, height)
             }
             MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
             MotionEvent.ACTION_MOVE -> {
@@ -62,7 +65,13 @@ internal class ModelGLSurfaceView(
                     val dx = event.x - previousX
                     val dy = event.y - previousY
                     if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
-                    sceneRenderer.orbitBy(dx * .45f, dy * .38f)
+                    val objectId = touchedObject
+                    if (objectId != null) {
+                        val world = sceneRenderer.screenDragToWorld(dx, dy)
+                        onMove(objectId, world.first, world.second)
+                    } else {
+                        sceneRenderer.orbitBy(dx * .45f, dy * .38f)
+                    }
                 }
                 previousX = event.x; previousY = event.y
             }
@@ -79,6 +88,7 @@ internal class ModelGLSurfaceView(
                     post { onSelect(picked) }
                 }
                 activePointers = 0
+                touchedObject = null
                 performClick()
             }
             MotionEvent.ACTION_CANCEL -> activePointers = 0
@@ -137,6 +147,14 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     fun orbitBy(dx: Float, dy: Float) {
         yaw = (yaw + dx) % 360f
         pitch = (pitch - dy).coerceIn(-89f, 89f)
+    }
+
+    fun screenDragToWorld(dx: Float, dy: Float): Pair<Float, Float> {
+        val a = Math.toRadians(yaw.toDouble())
+        val scale = 1.7f / zoom
+        val wx = (dx * cos(a) - dy * sin(a)) * scale
+        val wy = (-dx * sin(a) - dy * cos(a)) * scale
+        return wx.toFloat() to wy.toFloat()
     }
 
     fun zoomBy(factor: Float) {
