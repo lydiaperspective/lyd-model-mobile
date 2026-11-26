@@ -237,58 +237,170 @@ private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float,
     onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit
 ) {
+    var yaw by remember { mutableFloatStateOf(45f) }
+    var pitch by remember { mutableFloatStateOf(32f) }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
-    var dragId by remember { mutableStateOf<Long?>(null) }
-    Canvas(Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
-        .pointerInput(objects, canvasSize, zoom) {
-            detectTapGestures { point ->
-                val hit = objects.asReversed().firstOrNull { obj ->
-                    val p = project(obj.x, obj.y, obj.z, canvasSize, zoom)
-                    (point - p).getDistance() < (max(obj.sx, obj.sy) * zoom * 1.5f).coerceAtLeast(30f)
+    var dragTarget by remember { mutableStateOf<Long?>(null) }
+    var orbiting by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()
+            .onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
+            .pointerInput(objects, canvasSize, zoom, yaw, pitch) {
+                detectTapGestures { point ->
+                    val hit = objects.asReversed().firstOrNull { obj ->
+                        val p = project3d(obj.x, obj.y, obj.z + obj.sz / 2f, canvasSize, zoom, yaw, pitch)
+                        (point - p).getDistance() < (max(obj.sx, obj.sy) * zoom * .9f).coerceAtLeast(24f)
+                    }
+                    onSelect(hit?.id)
                 }
-                onSelect(hit?.id)
+            }
+            .pointerInput(objects, selectedId, zoom, yaw, pitch, canvasSize) {
+                detectDragGestures(
+                    onDragStart = { point ->
+                        val hit = objects.asReversed().firstOrNull { obj ->
+                            val p = project3d(obj.x, obj.y, obj.z + obj.sz / 2f, canvasSize, zoom, yaw, pitch)
+                            (point - p).getDistance() < (max(obj.sx, obj.sy) * zoom * 1.1f).coerceAtLeast(28f)
+                        }
+                        dragTarget = hit?.id
+                        orbiting = hit == null
+                    },
+                    onDragEnd = { dragTarget = null; orbiting = false },
+                    onDragCancel = { dragTarget = null; orbiting = false }
+                ) { change, amount ->
+                    change.consume()
+                    if (orbiting) {
+                        yaw = (yaw + amount.x * .45f) % 360f
+                        pitch = (pitch - amount.y * .35f).coerceIn(5f, 89f)
+                    } else {
+                        dragTarget?.let { id ->
+                            val scale = (zoom * 1.15f).coerceAtLeast(.2f)
+                            val a = Math.toRadians(yaw.toDouble())
+                            val dx = (amount.x * cos(a) + amount.y * sin(a)) / scale
+                            val dy = (-amount.x * sin(a) + amount.y * cos(a)) / scale
+                            onMove(id, dx.toFloat(), dy.toFloat())
+                        }
+                    }
+                }
+            }
+            .pointerInput(Unit) { detectTransformGestures { _, _, scale, _ -> onZoom(scale) } }
+        ) {
+            val center = Offset(size.width / 2f, size.height * .55f)
+            for (i in -12..12) {
+                drawLine(Color(0xFF273444),
+                    project3d(i * 10f, -120f, 0f, size, zoom, yaw, pitch),
+                    project3d(i * 10f, 120f, 0f, size, zoom, yaw, pitch), 1f)
+                drawLine(Color(0xFF273444),
+                    project3d(-120f, i * 10f, 0f, size, zoom, yaw, pitch),
+                    project3d(120f, i * 10f, 0f, size, zoom, yaw, pitch), 1f)
+            }
+            drawCircle(Color(0xFF55D6BE), 3f, center)
+
+            objects.forEach { obj ->
+                val base = when (obj.kind) {
+                    ShapeKind.CUBE -> Color(0xFF648CEB)
+                    ShapeKind.SPHERE -> Color(0xFFB17AE8)
+                    ShapeKind.CYLINDER -> Color(0xFF50B9A6)
+                }
+                val centerPoint = project3d(obj.x, obj.y, obj.z + obj.sz / 2f, size, zoom, yaw, pitch)
+                val scale = perspectiveScale(obj.x, obj.y, obj.z + obj.sz / 2f, size, zoom, yaw, pitch)
+                when (obj.kind) {
+                    ShapeKind.CUBE -> {
+                        val x0 = obj.x - obj.sx / 2f; val x1 = obj.x + obj.sx / 2f
+                        val y0 = obj.y - obj.sy / 2f; val y1 = obj.y + obj.sy / 2f
+                        val z0 = obj.z; val z1 = obj.z + obj.sz
+                        val v = listOf(
+                            floatArrayOf(x0,y0,z0), floatArrayOf(x1,y0,z0),
+                            floatArrayOf(x1,y1,z0), floatArrayOf(x0,y1,z0),
+                            floatArrayOf(x0,y0,z1), floatArrayOf(x1,y0,z1),
+                            floatArrayOf(x1,y1,z1), floatArrayOf(x0,y1,z1)
+                        )
+                        val faces = listOf(
+                            intArrayOf(0,1,2,3), intArrayOf(4,7,6,5),
+                            intArrayOf(0,4,5,1), intArrayOf(1,5,6,2),
+                            intArrayOf(2,6,7,3), intArrayOf(3,7,4,0)
+                        )
+                        faces.map { face ->
+                            val depth = face.map { v[it] }.map {
+                                cameraDepth(it[0],it[1],it[2],yaw,pitch)
+                            }.average()
+                            face to depth
+                        }.sortedByDescending { it.second }.forEachIndexed { faceIndex, pair ->
+                            val path = Path()
+                            pair.first.forEachIndexed { index, vi ->
+                                val q = project3d(v[vi][0],v[vi][1],v[vi][2],size,zoom,yaw,pitch)
+                                if (index == 0) path.moveTo(q.x,q.y) else path.lineTo(q.x,q.y)
+                            }
+                            path.close()
+                            val shade = when (faceIndex % 3) { 0 -> .48f; 1 -> .82f; else -> .64f }
+                            drawPath(path, base.copy(alpha = shade))
+                            if (obj.id == selectedId) drawPath(path, Color(0xFF55D6BE), style = Stroke(1.8f))
+                        }
+                    }
+                    ShapeKind.SPHERE -> {
+                        val radius = max(obj.sx, max(obj.sy, obj.sz)) * .5f * scale
+                        drawCircle(base.copy(alpha = .9f), radius.coerceAtLeast(3f), centerPoint)
+                        drawCircle(Color.White.copy(alpha = .22f), radius.coerceAtLeast(3f) * .72f,
+                            centerPoint + Offset(-radius * .22f, -radius * .25f))
+                        if (obj.id == selectedId) drawCircle(Color(0xFF55D6BE), radius.coerceAtLeast(3f),
+                            centerPoint, style = Stroke(2f))
+                    }
+                    ShapeKind.CYLINDER -> {
+                        val rx = obj.sx * .5f * scale
+                        val ry = obj.sy * .5f * scale * max(.18f, sin(Math.toRadians(pitch.toDouble())).toFloat())
+                        val top = project3d(obj.x,obj.y,obj.z+obj.sz,size,zoom,yaw,pitch)
+                        val bottom = project3d(obj.x,obj.y,obj.z,size,zoom,yaw,pitch)
+                        drawLine(base.copy(alpha = .72f), Offset(top.x-rx,top.y), Offset(bottom.x-rx,bottom.y), rx * .12f)
+                        drawLine(base.copy(alpha = .72f), Offset(top.x+rx,top.y), Offset(bottom.x+rx,bottom.y), rx * .12f)
+                        drawOval(base.copy(alpha = .55f), androidx.compose.ui.geometry.Offset(top.x-rx,top.y-ry),
+                            androidx.compose.ui.geometry.Size(rx*2,ry*2))
+                        drawOval(base, androidx.compose.ui.geometry.Offset(top.x-rx,top.y-ry),
+                            androidx.compose.ui.geometry.Size(rx*2,ry*2), style = Stroke(if (obj.id == selectedId) 3f else 1f))
+                        drawOval(base.copy(alpha = .4f), androidx.compose.ui.geometry.Offset(bottom.x-rx,bottom.y-ry),
+                            androidx.compose.ui.geometry.Size(rx*2,ry*2), style = Stroke(1f))
+                    }
+                }
             }
         }
-        .pointerInput(selectedId, zoom) {
-            detectDragGestures(onDragStart = { dragId = selectedId },
-                onDragEnd = { dragId = null }, onDragCancel = { dragId = null }) { change, amount ->
-                change.consume()
-                dragId?.let { onMove(it, amount.x / (zoom * 1.4f), -amount.y / (zoom * 1.4f)) }
-            }
+
+        Row(Modifier.align(Alignment.TopStart).padding(8.dp)
+            .background(Color(0xDD182331), RoundedCornerShape(12.dp)).padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { yaw = 0f; pitch = 89f }) { Text("Top", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 0f; pitch = 8f }) { Text("Front", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 90f; pitch = 8f }) { Text("Right", color = Color.White, fontSize = 10.sp) }
+            TextButton(onClick = { yaw = 45f; pitch = 32f }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
         }
-        .pointerInput(Unit) { detectTransformGestures { _, _, scale, _ -> onZoom(scale) } }
-    ) {
-        val center = Offset(size.width / 2f, size.height * .56f)
-        for (i in -12..12) {
-            drawLine(Color(0xFF273444), project(i * 10f, -120f, 0f, size, zoom),
-                project(i * 10f, 120f, 0f, size, zoom), 1f)
-            drawLine(Color(0xFF273444), project(-120f, i * 10f, 0f, size, zoom),
-                project(120f, i * 10f, 0f, size, zoom), 1f)
-        }
-        drawCircle(Color(0xFF55D6BE), 3f, center)
-        objects.forEach { obj ->
-            val p = project(obj.x, obj.y, obj.z, size, zoom)
-            val w = obj.sx * zoom * 1.4f; val h = obj.sy * zoom * .72f; val depth = obj.sz * zoom * 1.15f
-            val top = Path().apply { moveTo(p.x,p.y-depth); lineTo(p.x+w,p.y-depth-h*.5f)
-                lineTo(p.x,p.y-depth-h); lineTo(p.x-w,p.y-depth-h*.5f); close() }
-            val left = Path().apply { moveTo(p.x-w,p.y-depth-h*.5f); lineTo(p.x,p.y-depth-h)
-                lineTo(p.x,p.y); lineTo(p.x-w,p.y-h*.5f); close() }
-            val right = Path().apply { moveTo(p.x,p.y-depth-h); lineTo(p.x+w,p.y-depth-h*.5f)
-                lineTo(p.x+w,p.y-h*.5f); lineTo(p.x,p.y); close() }
-            val base = when(obj.kind) {
-                ShapeKind.CUBE -> Color(0xFF648CEB); ShapeKind.SPHERE -> Color(0xFFB17AE8); ShapeKind.CYLINDER -> Color(0xFF50B9A6)
-            }
-            drawPath(left, base.copy(alpha = .72f)); drawPath(right, base.copy(alpha = .48f)); drawPath(top, base)
-            if (obj.id == selectedId) {
-                drawPath(top, Color(0xFF55D6BE), style = Stroke(3f))
-                drawCircle(Color(0xFF55D6BE), 5f, Offset(p.x, p.y-depth-h))
-            }
-        }
+        Text("DRAG EMPTY SPACE TO ORBIT", Modifier.align(Alignment.BottomEnd).padding(10.dp),
+            color = Color(0xFF8D9CAF), fontSize = 9.sp)
     }
 }
 
-private fun project(x: Float, y: Float, z: Float, size: androidx.compose.ui.geometry.Size, zoom: Float): Offset {
-    return Offset(size.width/2f + (x-y)*.9f*zoom, size.height*.56f + (x+y)*.42f*zoom - z*1.35f*zoom)
+private fun cameraDepth(x: Float, y: Float, z: Float, yaw: Float, pitch: Float): Float {
+    val a = Math.toRadians(yaw.toDouble()); val p = Math.toRadians(pitch.toDouble())
+    val depthAlongView = (x * sin(a) + y * cos(a)).toFloat()
+    return depthAlongView * cos(p).toFloat() + z * sin(p).toFloat()
+}
+
+private fun perspectiveScale(
+    x: Float, y: Float, z: Float, size: androidx.compose.ui.geometry.Size,
+    zoom: Float, yaw: Float, pitch: Float
+): Float {
+    val focal = size.minDimension * 1.15f
+    val distance = 520f
+    return focal / (distance - cameraDepth(x,y,z,yaw,pitch)).coerceAtLeast(100f) * zoom
+}
+
+private fun project3d(
+    x: Float, y: Float, z: Float, size: androidx.compose.ui.geometry.Size,
+    zoom: Float, yaw: Float, pitch: Float
+): Offset {
+    val a = Math.toRadians(yaw.toDouble()); val p = Math.toRadians(pitch.toDouble())
+    val right = (x * cos(a) - y * sin(a)).toFloat()
+    val depth = (x * sin(a) + y * cos(a)).toFloat()
+    val vertical = z * cos(p).toFloat() - depth * sin(p).toFloat()
+    val scale = perspectiveScale(x,y,z,size,zoom,yaw,pitch)
+    return Offset(size.width / 2f + right * scale, size.height * .55f - vertical * scale)
 }
 
 @Composable
