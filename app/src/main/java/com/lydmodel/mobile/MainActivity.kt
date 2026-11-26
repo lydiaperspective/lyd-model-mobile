@@ -103,13 +103,9 @@ private fun LydModelApp() {
                                 { id, dx, dy -> objects = objects.map { obj ->
                                     if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy) else obj
                                 } },
-                                { id, dx, dy, dz -> objects = objects.map { obj ->
-                                    if (obj.id == id) obj.copy(
-                                        sx = (obj.sx + dx).coerceAtLeast(0.1f),
-                                        sy = (obj.sy + dy).coerceAtLeast(0.1f),
-                                        sz = (obj.sz + dz).coerceAtLeast(0.1f)
-                                    ) else obj
-                                } }, showHints = true)
+                                { id, handle, dx, dy, dz -> objects = objects.map { obj ->
+                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
+                                        } }, showHints = true)
                         }
                     } else {
                     TopBar(
@@ -134,12 +130,8 @@ private fun LydModelApp() {
                                         { id, dx, dy -> objects = objects.map {
                                             if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
                                         } },
-                                        { id, dx, dy, dz -> objects = objects.map { obj ->
-                                            if (obj.id == id) obj.copy(
-                                                sx = (obj.sx + dx).coerceAtLeast(0.1f),
-                                                sy = (obj.sy + dy).coerceAtLeast(0.1f),
-                                                sz = (obj.sz + dz).coerceAtLeast(0.1f)
-                                            ) else obj
+                                        { id, handle, dx, dy, dz -> objects = objects.map { obj ->
+                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
                                         } })
                                 }
                             }
@@ -195,13 +187,9 @@ private fun LydModelApp() {
                                 { id, dx, dy -> objects = objects.map {
                                     if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
                                 } },
-                                { id, dx, dy, dz -> objects = objects.map { obj ->
-                                    if (obj.id == id) obj.copy(
-                                        sx = (obj.sx + dx).coerceAtLeast(0.1f),
-                                        sy = (obj.sy + dy).coerceAtLeast(0.1f),
-                                        sz = (obj.sz + dz).coerceAtLeast(0.1f)
-                                    ) else obj
-                                } })
+                                { id, handle, dx, dy, dz -> objects = objects.map { obj ->
+                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
+                                        } })
                         }
                         if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
                             objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
@@ -236,6 +224,21 @@ private fun LydModelApp() {
 }
 
 @Composable
+
+private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float, dz: Float): ModelObject {
+    val sxSign = when (handle) { 0,2,4,6,8 -> -1f; 1,3,5,7,9 -> 1f; else -> 0f }
+    val sySign = when (handle) { 0,1,4,5,10 -> -1f; 2,3,6,7,11 -> 1f; else -> 0f }
+    val szSign = when (handle) { in 0..3, 12 -> -1f; in 4..7, 13 -> 1f; else -> 0f }
+    val nextX = (obj.sx + sxSign * dx).coerceAtLeast(0.1f)
+    val nextY = (obj.sy + sySign * dy).coerceAtLeast(0.1f)
+    val nextZ = (obj.sz + szSign * dz).coerceAtLeast(0.1f)
+    val actualX = nextX - obj.sx; val actualY = nextY - obj.sy; val actualZ = nextZ - obj.sz
+    return obj.copy(sx=nextX, sy=nextY, sz=nextZ,
+        x=obj.x + sxSign * actualX / 2f,
+        y=obj.y + sySign * actualY / 2f,
+        z=obj.z + szSign * actualZ / 2f)
+}
+
 private fun WorkspaceLabel(compact: Boolean) {
     Text("UNTITLED DESIGN  •  MILLIMETRES",
         Modifier.padding(start = 8.dp, top = if (compact) 2.dp else 8.dp),
