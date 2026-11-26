@@ -23,21 +23,23 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.Redo
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -67,6 +69,8 @@ internal data class ModelObject(
     val visible: Boolean = true
 )
 
+internal data class DimensionMarker(val axis: Int, val x: Float, val y: Float, val value: Float)
+
 @Composable
 private fun LydModelApp() {
     var objects by remember { mutableStateOf(listOf(ModelObject(1, ShapeKind.CUBE))) }
@@ -78,6 +82,11 @@ private fun LydModelApp() {
     var penMode by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var panelWidth by remember { mutableFloatStateOf(290f) }
+    var workplaneWidth by remember { mutableFloatStateOf(200f) }
+    var workplaneDepth by remember { mutableFloatStateOf(200f) }
+    var gridSnap by remember { mutableFloatStateOf(1f) }
+    var resizeStep by remember { mutableFloatStateOf(5f) }
+    var showSettings by remember { mutableStateOf(false) }
     var cameraRequest by remember { mutableStateOf<CameraRequest?>(null) }
     var nextCameraRequest by remember { mutableLongStateOf(0L) }
     val requestCamera: (Long?) -> Unit = { shapeId ->
@@ -85,6 +94,29 @@ private fun LydModelApp() {
     }
     val context = LocalContext.current
     val selected = objects.firstOrNull { it.id == selectedId }
+    val moveRemainders = remember { mutableMapOf<Long, FloatArray>() }
+    val resizeRemainders = remember { mutableMapOf<Long, FloatArray>() }
+    val moveShape: (Long, Float, Float, Float) -> Unit = { id, dx, dy, dz ->
+        val remainder = moveRemainders.getOrPut(id) { floatArrayOf(0f, 0f, 0f) }
+        objects = objects.map { obj ->
+            if (obj.id != id) obj else {
+                val rawX = obj.x + dx + remainder[0]
+                val rawY = obj.y + dy + remainder[1]
+                val rawZ = obj.z + dz + remainder[2]
+                val nextX = snapToStep(rawX, gridSnap)
+                val nextY = snapToStep(rawY, gridSnap)
+                val nextZ = snapToStep(rawZ, gridSnap)
+                remainder[0] = rawX - nextX; remainder[1] = rawY - nextY; remainder[2] = rawZ - nextZ
+                obj.copy(x = nextX, y = nextY, z = nextZ)
+            }
+        }
+    }
+    val resizeShape: (Long, Int, Float, Float, Float) -> Unit = { id, handle, dx, dy, dz ->
+        val remainder = resizeRemainders.getOrPut(id) { floatArrayOf(0f, 0f, 0f) }
+        objects = objects.map { obj ->
+            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz, resizeStep, remainder) else obj
+        }
+    }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/stl")) { uri ->
         if (uri != null) runCatching {
             context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(StlExporter.export(objects)) }
@@ -107,24 +139,29 @@ private fun LydModelApp() {
                                 horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedButton(onClick = { fullScreen = false }) { Text("Exit focus") }
                                 Spacer(Modifier.width(8.dp))
+                                IconButton(onClick = { showSettings = true }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Default.Settings, "Settings", tint = Color.White)
+                                }
                                 Button(onClick = { fullScreen = false; toolsExpanded = true }) { Text("Show tools") }
                             }
                             ModelViewport(objects, selectedId, zoom, penMode,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
-                                { id, dx, dy, dz -> objects = objects.map { obj ->
-                                    if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy, z = obj.z + dz) else obj
-                                } },
-                                { id, handle, dx, dy, dz -> objects = objects.map { obj ->
-                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } }, showHints = true, cameraRequest = cameraRequest,
-                                onCameraRequest = requestCamera)
+                                moveShape, resizeShape, showHints = true, cameraRequest = cameraRequest,
+                                workplaneWidth = workplaneWidth, workplaneDepth = workplaneDepth,
+                                onCameraRequest = requestCamera,
+                                onEditDimension = { id, axis, value ->
+                                    resizeRemainders.remove(id)
+                                    objects = objects.map { obj ->
+                                    if (obj.id != id) obj else when (axis) {
+                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
+                                    }
+                                } })
                         }
                     } else {
                     TopBar(
-                        onUndo = { status = "Undo history is planned" },
-                        onRedo = { status = "Redo history is planned" },
                         onExport = { exportLauncher.launch("lyd-model.stl") },
+                        onOpenSettings = { showSettings = true },
                         compact = compact,
                         toolsExpanded = toolsExpanded,
                         onToggleTools = { toolsExpanded = !toolsExpanded },
@@ -143,12 +180,15 @@ private fun LydModelApp() {
                                     ModelViewport(objects, selectedId, zoom, penMode,
                                         { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                         { selectedId = it },
-                                        { id, dx, dy, dz -> objects = objects.map {
-                                            if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy, z = it.z + dz) else it
-                                        } },
-                                        { id, handle, dx, dy, dz -> objects = objects.map { obj ->
-                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } }, cameraRequest = cameraRequest, onCameraRequest = requestCamera)
+                                        moveShape, resizeShape, cameraRequest = cameraRequest, workplaneWidth = workplaneWidth,
+                                workplaneDepth = workplaneDepth, onCameraRequest = requestCamera,
+                                onEditDimension = { id, axis, value ->
+                                    resizeRemainders.remove(id)
+                                    objects = objects.map { obj ->
+                                    if (obj.id != id) obj else when (axis) {
+                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
+                                    }
+                                } })
                                 }
                             }
                             if (toolsExpanded) {
@@ -161,11 +201,7 @@ private fun LydModelApp() {
                                         fontSize = 11.sp, modifier = Modifier.weight(1f))
                                     TextButton(onClick = { toolsExpanded = false }) { Text("Hide") }
                                 }
-                                if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
-                                    objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
-                                        0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
-                                    } }
-                                }, {
+                                if (toolsExpanded && selected != null) Inspector(selected, {
                                     objects = objects.filterNot { it.id == selected.id }
                                     selectedId = objects.lastOrNull()?.id
                                 }, {
@@ -203,18 +239,17 @@ private fun LydModelApp() {
                             ModelViewport(objects, selectedId, zoom, penMode,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
-                                { id, dx, dy, dz -> objects = objects.map {
-                                    if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy, z = it.z + dz) else it
-                                } },
-                                { id, handle, dx, dy, dz -> objects = objects.map { obj ->
-                                            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } }, cameraRequest = cameraRequest, onCameraRequest = requestCamera)
+                                moveShape, resizeShape, cameraRequest = cameraRequest, workplaneWidth = workplaneWidth,
+                                workplaneDepth = workplaneDepth, onCameraRequest = requestCamera,
+                                onEditDimension = { id, axis, value ->
+                                    resizeRemainders.remove(id)
+                                    objects = objects.map { obj ->
+                                    if (obj.id != id) obj else when (axis) {
+                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
+                                    }
+                                } })
                         }
-                        if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
-                            objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
-                                0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
-                            } }
-                        }, {
+                        if (toolsExpanded && selected != null) Inspector(selected, {
                             objects = objects.filterNot { it.id == selected.id }
                             selectedId = objects.lastOrNull()?.id
                         }, {
@@ -243,19 +278,39 @@ private fun LydModelApp() {
                             color = Color(0xFF8292A6), fontSize = 10.sp, maxLines = 1)
                     }
                     }
+                    if (showSettings) SettingsDialog(workplaneWidth, workplaneDepth, gridSnap, resizeStep,
+                        onDismiss = { showSettings = false },
+                        onApply = { width, depth, snap, resize ->
+                            workplaneWidth = width
+                            workplaneDepth = depth
+                            gridSnap = snap
+                            resizeStep = resize
+                            showSettings = false
+                        })
                 }
             }
         }
     }
 }
 
-private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float, dz: Float): ModelObject {
+private fun snapToStep(value: Float, step: Float): Float =
+    if (step <= 0f) value else (value / step).roundToInt() * step
+
+private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float, dz: Float,
+                             step: Float, remainder: FloatArray): ModelObject {
     val sxSign = when (handle) { 0,2,4,6,8 -> -1f; 1,3,5,7,9 -> 1f; else -> 0f }
     val sySign = when (handle) { 0,1,4,5,10 -> -1f; 2,3,6,7,11 -> 1f; else -> 0f }
     val szSign = when (handle) { in 0..3, 12 -> -1f; in 4..7, 13 -> 1f; else -> 0f }
-    val nextX = (obj.sx + sxSign * dx).coerceAtLeast(0.1f)
-    val nextY = (obj.sy + sySign * dy).coerceAtLeast(0.1f)
-    val nextZ = (obj.sz + szSign * dz).coerceAtLeast(0.1f)
+    fun resized(current: Float, change: Float, axis: Int): Float {
+        if (change == 0f) return current
+        val raw = current + change + remainder[axis]
+        val next = snapToStep(raw.coerceAtLeast(.1f), step).coerceAtLeast(.1f)
+        remainder[axis] = if (raw <= .1f) 0f else raw - next
+        return next
+    }
+    val nextX = resized(obj.sx, sxSign * dx, 0)
+    val nextY = resized(obj.sy, sySign * dy, 1)
+    val nextZ = resized(obj.sz, szSign * dz, 2)
     val actualX = nextX - obj.sx; val actualY = nextY - obj.sy; val actualZ = nextZ - obj.sz
     return obj.copy(sx=nextX, sy=nextY, sz=nextZ,
         x=obj.x + sxSign * actualX / 2f,
@@ -337,7 +392,7 @@ private fun WorkspaceHints(compact: Boolean, modifier: Modifier = Modifier) {
 
 @Composable
 private fun TopBar(
-    onUndo: () -> Unit, onRedo: () -> Unit, onExport: () -> Unit,
+    onExport: () -> Unit, onOpenSettings: () -> Unit,
     compact: Boolean = false, toolsExpanded: Boolean, onToggleTools: () -> Unit,
     onToggleFullscreen: () -> Unit, landscape: Boolean = false,
     penMode: Boolean = false, onTogglePenMode: () -> Unit = {}
@@ -362,11 +417,8 @@ private fun TopBar(
             TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 7.dp)) {
                 Text("Focus", fontSize = 12.sp)
             }
-            IconButton(onClick = onUndo, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray, modifier = Modifier.size(19.dp))
-            }
-            IconButton(onClick = onRedo, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray, modifier = Modifier.size(19.dp))
+            IconButton(onClick = onOpenSettings, modifier = Modifier.size(42.dp)) {
+                Icon(Icons.Default.Settings, "Settings", tint = Color.LightGray)
             }
             Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)) {
                 Icon(Icons.Default.FileDownload, null, Modifier.size(16.dp))
@@ -396,8 +448,7 @@ private fun TopBar(
                         color = if (penMode) Color(0xFF55D6BE) else Color.LightGray)
                 }
                 TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 5.dp)) { Text("Focus") }
-                IconButton(onClick = onUndo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
-                IconButton(onClick = onRedo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Settings, "Settings", tint = Color.LightGray) }
             }
         }
     } else {
@@ -413,8 +464,7 @@ private fun TopBar(
                     color = if (penMode) Color(0xFF55D6BE) else Color.LightGray)
             }
             TextButton(onClick = onToggleFullscreen) { Text("Focus") }
-            IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
-            IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
+            IconButton(onClick = onOpenSettings, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Settings, "Settings", tint = Color.LightGray) }
             Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 14.dp)) {
                 Icon(Icons.Default.FileDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("STL")
             }
@@ -429,31 +479,93 @@ private fun ModelViewport(
     onResize: (Long, Int, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
     showHints: Boolean = true,
     cameraRequest: CameraRequest? = null,
-    onCameraRequest: (Long?) -> Unit = {}
+    workplaneWidth: Float = 200f,
+    workplaneDepth: Float = 200f,
+    onCameraRequest: (Long?) -> Unit = {},
+    onEditDimension: (Long, Int, Float) -> Unit = { _, _, _ -> }
 ) {
     var cameraPreset by remember { mutableIntStateOf(6) }
-    Box(Modifier.fillMaxSize()) {
+    var dimensionMarkers by remember { mutableStateOf(emptyList<DimensionMarker>()) }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    var editingDimension by remember { mutableIntStateOf(-1) }
+    var dimensionInput by remember { mutableStateOf("") }
+    val selectedShape = objects.firstOrNull { it.id == selectedId }
+    Box(Modifier.fillMaxSize().onSizeChanged { viewportSize = it }) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
-                ModelGLSurfaceView(context, onSelect, onMove, onResize, onZoom).also {
-                    it.updateScene(objects, selectedId, cameraPreset, zoom, penMode, cameraRequest)
+                ModelGLSurfaceView(context, onSelect, onMove, onResize, onZoom) { markers ->
+                    dimensionMarkers = markers
+                }.also {
+                    it.updateScene(objects, selectedId, cameraPreset, zoom, penMode, cameraRequest,
+                        workplaneWidth, workplaneDepth)
                 }
             },
-            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom, penMode, cameraRequest) }
+            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom, penMode,
+                cameraRequest, workplaneWidth, workplaneDepth) }
         )
-        Row(Modifier.align(Alignment.TopStart).padding(8.dp)
-            .horizontalScroll(rememberScrollState())
-            .background(Color(0xDD182331), RoundedCornerShape(12.dp)).padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { cameraPreset = 0 }) { Text("Top", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 1 }) { Text("Front", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 2 }) { Text("Back", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 3 }) { Text("Right", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 4 }) { Text("Left", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 5 }) { Text("Bottom", color = Color.White, fontSize = 10.sp) }
-            TextButton(onClick = { cameraPreset = 6 }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
-            TextButton(onClick = { onCameraRequest(null) }) { Text("Recenter", color = Color.White, fontSize = 10.sp) }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        dimensionMarkers.forEach { marker ->
+            val chipWidth = with(density) { 76.dp.roundToPx() }
+            val chipHeight = with(density) { 44.dp.roundToPx() }
+            val x = (marker.x.toInt() - chipWidth / 2).coerceIn(0,
+                (viewportSize.width - chipWidth).coerceAtLeast(0))
+            val y = (marker.y.toInt() - chipHeight / 2).coerceIn(0,
+                (viewportSize.height - chipHeight).coerceAtLeast(0))
+            Surface(Modifier.offset { IntOffset(x, y) }.clickable {
+                editingDimension = marker.axis
+                dimensionInput = String.format(Locale.US, "%.2f", marker.value)
+            }, color = Color(0xF2263544), shape = RoundedCornerShape(9.dp), tonalElevation = 3.dp) {
+                Box(Modifier.widthIn(min = 68.dp).heightIn(min = 44.dp).padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center) {
+                    Text(String.format(Locale.US, "%.2f", marker.value), color = Color.White,
+                        fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+        if (editingDimension >= 0 && selectedShape != null) {
+            val axisLabel = listOf("Width", "Depth", "Height")[editingDimension.coerceIn(0, 2)]
+            AlertDialog(onDismissRequest = { editingDimension = -1 },
+                title = { Text("Set $axisLabel") },
+                text = {
+                    OutlinedTextField(value = dimensionInput, onValueChange = { raw ->
+                        dimensionInput = raw.filter { it.isDigit() || it == '.' }.take(10)
+                    }, label = { Text("$axisLabel (mm)") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done))
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        dimensionInput.toFloatOrNull()?.takeIf { it in .1f..10000f }?.let {
+                            onEditDimension(selectedShape.id, editingDimension, it)
+                            editingDimension = -1
+                        }
+                    }) { Text("Apply") }
+                },
+                dismissButton = { TextButton(onClick = { editingDimension = -1 }) { Text("Cancel") } })
+        }
+        var moreViews by remember { mutableStateOf(false) }
+        Column(Modifier.align(Alignment.TopStart).padding(8.dp)
+            .background(Color(0xDD182331), RoundedCornerShape(14.dp)).padding(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            CameraNavCube(onPreset = { cameraPreset = it })
+            Box {
+                IconButton(onClick = { moreViews = true }, modifier = Modifier.size(42.dp)) {
+                    Icon(Icons.Default.MoreVert, "More camera views", tint = Color.White)
+                }
+                DropdownMenu(expanded = moreViews, onDismissRequest = { moreViews = false }) {
+                    listOf("Back" to 2, "Left" to 4, "Bottom" to 5, "Home view" to 6).forEach { (label, preset) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = {
+                            cameraPreset = preset
+                            moreViews = false
+                        })
+                    }
+                    DropdownMenuItem(text = { Text("Fit all shapes") }, onClick = {
+                        onCameraRequest(null)
+                        moreViews = false
+                    })
+                }
+            }
         }
         if (showHints) {
             Text(if (penMode) "Touch: orbit / pinch zoom  •  Pen: select, move and resize" else "Drag empty space to orbit  •  Drag object to move  •  Pinch to zoom",
@@ -465,28 +577,107 @@ private fun ModelViewport(
 }
 
 @Composable
-private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false, onFocusShape: () -> Unit = {}) {
+private fun CameraNavCube(onPreset: (Int) -> Unit) {
+    Canvas(Modifier.size(82.dp).pointerInput(Unit) {
+        detectTapGestures { point ->
+            val middle = size.width / 2f
+            val topBand = size.height * .47f
+            onPreset(if (point.y < topBand) 0 else if (point.x < middle) 1 else 3)
+        }
+    }) {
+        val w = size.width
+        val h = size.height
+        fun face(points: List<Offset>, color: Color) {
+            val path = Path().apply {
+                moveTo(points.first().x, points.first().y)
+                points.drop(1).forEach { lineTo(it.x, it.y) }
+                close()
+            }
+            drawPath(path, color)
+            drawPath(path, Color(0xFF8EA7BF), style = Stroke(width = 1.5.dp.toPx()))
+        }
+        face(listOf(Offset(w * .5f, h * .05f), Offset(w * .92f, h * .26f),
+            Offset(w * .5f, h * .48f), Offset(w * .08f, h * .26f)), Color(0xFF506B84))
+        face(listOf(Offset(w * .08f, h * .26f), Offset(w * .5f, h * .48f),
+            Offset(w * .5f, h * .94f), Offset(w * .08f, h * .72f)), Color(0xFF31485E))
+        face(listOf(Offset(w * .5f, h * .48f), Offset(w * .92f, h * .26f),
+            Offset(w * .92f, h * .72f), Offset(w * .5f, h * .94f)), Color(0xFF3D586F))
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = 10.dp.toPx()
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT,
+                android.graphics.Typeface.BOLD)
+        }
+        drawContext.canvas.nativeCanvas.apply {
+            drawText("TOP", w * .5f, h * .29f, paint)
+            drawText("FRONT", w * .29f, h * .66f, paint)
+            drawText("RIGHT", w * .71f, h * .66f, paint)
+        }
+    }
+}
+
+@Composable
+private fun SettingsDialog(
+    workplaneWidth: Float, workplaneDepth: Float, gridSnap: Float, resizeStep: Float,
+    onDismiss: () -> Unit, onApply: (Float, Float, Float, Float) -> Unit
+) {
+    var widthText by remember { mutableStateOf(workplaneWidth.toString()) }
+    var depthText by remember { mutableStateOf(workplaneDepth.toString()) }
+    var snapText by remember { mutableStateOf(gridSnap.toString()) }
+    var resizeText by remember { mutableStateOf(resizeStep.toString()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("Workspace settings") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Workplane size (mm)", color = Color(0xFF8EA0B5), fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(widthText, { widthText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Width") }, modifier = Modifier.weight(1f), singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                    OutlinedTextField(depthText, { depthText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Depth") }, modifier = Modifier.weight(1f), singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                }
+                OutlinedTextField(snapText, { snapText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Move snap (mm)") }, supportingText = { Text("Spacing used when moving shapes") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                OutlinedTextField(resizeText, { resizeText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Resize step (mm)") }, supportingText = { Text("Shape sizes snap to this amount while resizing") },
+                    singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val width = widthText.toFloatOrNull()
+                val depth = depthText.toFloatOrNull()
+                val snap = snapText.toFloatOrNull()
+                val resize = resizeText.toFloatOrNull()
+                if (width == null || depth == null || snap == null || resize == null ||
+                    width !in 20f..10000f || depth !in 20f..10000f || snap !in .1f..100f || resize !in .1f..100f) {
+                    error = "Enter workplane sizes from 20–10000 mm and snap amounts from 0.1–100 mm."
+                } else onApply(width, depth, snap, resize)
+            }) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+private fun Inspector(obj: ModelObject, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false, onFocusShape: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("SELECTED  •  ${obj.kind.name}", color = Color.White, fontWeight = FontWeight.Bold,
                 fontSize = 12.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onFocusShape, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                Text("Focus", fontSize = 11.sp)
+            }
             IconButton(onClick = onDuplicate, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ContentCopy, "Duplicate", tint = Color(0xFFB5C6DA)) }
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF8B8B)) }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("SIZE  •  MILLIMETRES", color = Color(0xFF8EA0B5), fontSize = 10.sp,
-                modifier = Modifier.weight(1f))
-            TextButton(onClick = onFocusShape, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                Text("Focus Shape", fontSize = 11.sp)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DimensionControl("Width", obj.sx, Modifier.weight(1f)) { onSize(0, it) }
-            DimensionControl("Depth", obj.sy, Modifier.weight(1f)) { onSize(1, it) }
-            DimensionControl("Height", obj.sz, Modifier.weight(1f)) { onSize(2, it) }
-        }
-        Divider(color = Color(0xFF344252), modifier = Modifier.padding(vertical = 5.dp))
         Text("MOVE  •  1 MM NUDGE", color = Color(0xFF8EA0B5), fontSize = 10.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("X" to 0, "Y" to 1, "Z" to 2).forEach { (axis, index) ->
@@ -502,25 +693,6 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
         }
         Text("Position: X ${obj.x.toInt()}  •  Y ${obj.y.toInt()}  •  Z ${obj.z.toInt()} mm",
             color = Color(0xFF9BA9BB), fontSize = 10.sp)
-    }
-}
-
-@Composable
-private fun DimensionControl(label: String, value: Float, modifier: Modifier = Modifier, onChange: (Float) -> Unit) {
-    var text by remember(value) { mutableStateOf(if (value % 1f == 0f) value.toInt().toString() else value.toString()) }
-    Column(modifier) {
-        Text("$label (mm)", color = Color(0xFF8EA0B5), fontSize = 10.sp)
-        OutlinedTextField(
-            value = text,
-            onValueChange = { raw ->
-                text = raw.filter { it.isDigit() || it == '.' }.take(8)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { text.toFloatOrNull()?.takeIf { it in 0.1f..1000f }?.let(onChange) }),
-        )
     }
 }
 

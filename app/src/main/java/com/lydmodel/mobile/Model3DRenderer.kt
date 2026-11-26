@@ -23,9 +23,10 @@ internal class ModelGLSurfaceView(
     private val onSelect: (Long?) -> Unit,
     private val onMove: (Long, Float, Float, Float) -> Unit,
     private val onResize: (Long, Int, Float, Float, Float) -> Unit,
-    private val onZoom: (Float) -> Unit
+    private val onZoom: (Float) -> Unit,
+    private val onDimensionMarkers: (List<DimensionMarker>) -> Unit
 ) : GLSurfaceView(context) {
-    private val sceneRenderer = ModelSceneRenderer()
+    private val sceneRenderer = ModelSceneRenderer { markers -> post { onDimensionMarkers(markers) } }
     private var previousX = 0f
     private var previousY = 0f
     private var activePointers = 0
@@ -66,8 +67,9 @@ internal class ModelGLSurfaceView(
     }
 
     fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float, penMode: Boolean,
-                    cameraRequest: CameraRequest? = null) {
-        sceneRenderer.updateScene(objects, selectedId, preset, zoom, cameraRequest)
+                    cameraRequest: CameraRequest? = null, workplaneWidth: Float = 200f,
+                    workplaneDepth: Float = 200f) {
+        sceneRenderer.updateScene(objects, selectedId, preset, zoom, cameraRequest, workplaneWidth, workplaneDepth)
         this.penMode = penMode
     }
 
@@ -195,7 +197,7 @@ internal class ModelGLSurfaceView(
 
 internal data class CameraRequest(val id: Long, val focusShapeId: Long?)
 
-private class ModelSceneRenderer : GLSurfaceView.Renderer {
+private class ModelSceneRenderer(private val onDimensionMarkers: (List<DimensionMarker>) -> Unit) : GLSurfaceView.Renderer {
     @Volatile private var objects: List<ModelObject> = emptyList()
     @Volatile private var selectedId: Long? = null
     @Volatile private var preset: Int = 6
@@ -217,6 +219,11 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     private var width = 1
     private var height = 1
     private var cameraDistance = 340f
+    @Volatile private var workplaneWidth = 200f
+    @Volatile private var workplaneDepth = 200f
+    private var renderedWorkplaneWidth = 200f
+    private var renderedWorkplaneDepth = 200f
+    private var lastDimensionMarkers: List<DimensionMarker>? = null
     @Volatile private var targetX = 0f
     @Volatile private var targetY = 0f
     @Volatile private var targetZ = 18f
@@ -226,7 +233,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     private lateinit var grid: GpuMesh
 
     fun updateScene(items: List<ModelObject>, selected: Long?, viewPreset: Int, currentZoom: Float,
-                    cameraRequest: CameraRequest? = null) {
+                    cameraRequest: CameraRequest? = null, canvasWidth: Float = 200f,
+                    canvasDepth: Float = 200f) {
         objects = items.toList()
         selectedId = selected
         if (preset != viewPreset) {
@@ -243,6 +251,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         }
         zoom = currentZoom.coerceIn(.35f, 3.5f)
         pendingCameraRequest = cameraRequest
+        workplaneWidth = canvasWidth.coerceIn(20f, 10000f)
+        workplaneDepth = canvasDepth.coerceIn(20f, 10000f)
     }
 
     private fun applyCameraRequest() {
@@ -337,6 +347,31 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     }
 
     fun selectedObjectId(): Long? = selectedId?.takeIf { id -> objects.any { it.id == id && it.visible } }
+
+    private fun reportDimensionMarkers() {
+        val item = objects.firstOrNull { it.id == selectedId && it.visible }
+        val next = if (item == null || width <= 0 || height <= 0) emptyList() else {
+            val margin = max(5f, max(item.sx, max(item.sy, item.sz)) * .18f)
+            listOf(
+                0 to (floatArrayOf(item.x, item.y - item.sy / 2f - margin, item.z)),
+                1 to (floatArrayOf(item.x + item.sx / 2f + margin, item.y, item.z)),
+                2 to (floatArrayOf(item.x + item.sx / 2f + margin, item.y, item.z + item.sz / 2f))
+            ).mapNotNull { (axis, point) ->
+                projectPoint(point, width, height)?.let { DimensionMarker(axis, it[0], it[1],
+                    when (axis) { 0 -> item.sx; 1 -> item.sy; else -> item.sz }) }
+            }
+        }
+        val previous = lastDimensionMarkers
+        val changed = previous == null || previous.size != next.size || next.indices.any { index ->
+            val before = previous[index]; val after = next[index]
+            before.axis != after.axis || before.value != after.value ||
+                abs(before.x - after.x) > 2f || abs(before.y - after.y) > 2f
+        }
+        if (changed) {
+            lastDimensionMarkers = next
+            onDimensionMarkers(next)
+        }
+    }
 
 
     private fun projectPoint(point: FloatArray, viewWidth: Int, viewHeight: Int): FloatArray? {
@@ -510,7 +545,9 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         meshes[ShapeKind.CUBE] = createMesh(cubeVertices())
         meshes[ShapeKind.SPHERE] = createMesh(sphereVertices())
         meshes[ShapeKind.CYLINDER] = createMesh(cylinderVertices())
-        grid = createMesh(gridVertices(), GLES20.GL_LINES)
+        grid = createMesh(gridVertices(workplaneWidth, workplaneDepth), GLES20.GL_LINES)
+        renderedWorkplaneWidth = workplaneWidth
+        renderedWorkplaneDepth = workplaneDepth
     }
 
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
@@ -521,6 +558,11 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10?) {
         applyCameraRequest()
+        if (renderedWorkplaneWidth != workplaneWidth || renderedWorkplaneDepth != workplaneDepth) {
+            grid = createMesh(gridVertices(workplaneWidth, workplaneDepth), GLES20.GL_LINES)
+            renderedWorkplaneWidth = workplaneWidth
+            renderedWorkplaneDepth = workplaneDepth
+        }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glUseProgram(program)
         val eye = cameraEye()
@@ -552,6 +594,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             drawMesh(meshes[item.kind] ?: return@forEach, base, true)
             if (item.id == selectedId) drawSelectionHandles(item)
         }
+        reportDimensionMarkers()
     }
 
     private fun drawSelectionHandles(item: ModelObject) {
@@ -703,14 +746,19 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         return out.toFloatArray()
     }
 
-    private fun gridVertices(): FloatArray {
+    private fun gridVertices(width: Float, depth: Float): FloatArray {
         val out = mutableListOf<Float>()
-        for (i in -20..20) {
-            val v = i * 10f
-            addVertex(out,floatArrayOf(v,-200f,0f),floatArrayOf(0f,0f,1f))
-            addVertex(out,floatArrayOf(v,200f,0f),floatArrayOf(0f,0f,1f))
-            addVertex(out,floatArrayOf(-200f,v,0f),floatArrayOf(0f,0f,1f))
-            addVertex(out,floatArrayOf(200f,v,0f),floatArrayOf(0f,0f,1f))
+        val xCount = (width / 10f).roundToInt().coerceIn(2, 400)
+        val yCount = (depth / 10f).roundToInt().coerceIn(2, 400)
+        for (i in 0..xCount) {
+            val x = -width / 2f + width * i / xCount
+            addVertex(out,floatArrayOf(x,-depth / 2f,0f),floatArrayOf(0f,0f,1f))
+            addVertex(out,floatArrayOf(x,depth / 2f,0f),floatArrayOf(0f,0f,1f))
+        }
+        for (i in 0..yCount) {
+            val y = -depth / 2f + depth * i / yCount
+            addVertex(out,floatArrayOf(-width / 2f,y,0f),floatArrayOf(0f,0f,1f))
+            addVertex(out,floatArrayOf(width / 2f,y,0f),floatArrayOf(0f,0f,1f))
         }
         return out.toFloatArray()
     }
