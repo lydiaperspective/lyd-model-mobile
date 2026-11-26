@@ -369,7 +369,7 @@ private fun ModelViewport(
             TextButton(onClick = { cameraPreset = 6 }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
         }
         if (showHints) {
-            Text("Drag empty space to orbit  •  Drag object to move  •  Pinch to zoom",
+            Text(if (penMode) "Touch: orbit / pinch zoom  •  Pen: select, move and resize" else "Drag empty space to orbit  •  Drag object to move  •  Pinch to zoom",
                 Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 10.dp)
                     .background(Color(0xCC182331), RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
                 color = Color(0xFFB5C2D1), fontSize = 9.sp, maxLines = 1)
