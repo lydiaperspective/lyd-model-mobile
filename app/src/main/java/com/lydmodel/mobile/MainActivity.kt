@@ -245,7 +245,7 @@ private fun ModelViewport(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
-                ModelGLSurfaceView(context, onSelect, onMove).also {
+                ModelGLSurfaceView(context, onSelect, onMove, onZoom).also {
                     it.updateScene(objects, selectedId, cameraPreset, zoom)
                 }
             },
