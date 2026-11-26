@@ -251,7 +251,51 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
                 base[2] = (base[2] * 1.18f).coerceAtMost(1f)
             }
             drawMesh(meshes[item.kind] ?: return@forEach, base, true)
+            if (item.id == selectedId) drawSelectionHandles(item)
         }
+    }
+
+    private fun drawSelectionHandles(item: ModelObject) {
+        val x0 = item.x - item.sx / 2f; val x1 = item.x + item.sx / 2f
+        val y0 = item.y - item.sy / 2f; val y1 = item.y + item.sy / 2f
+        val z0 = item.z; val z1 = item.z + item.sz
+        val corners = listOf(
+            floatArrayOf(x0,y0,z0), floatArrayOf(x1,y0,z0), floatArrayOf(x1,y1,z0), floatArrayOf(x0,y1,z0),
+            floatArrayOf(x0,y0,z1), floatArrayOf(x1,y0,z1), floatArrayOf(x1,y1,z1), floatArrayOf(x0,y1,z1)
+        )
+        val edges = intArrayOf(0,1,1,2,2,3,3,0,4,5,5,6,6,7,7,4,0,4,1,5,2,6,3,7)
+        val outline = mutableListOf<Float>()
+        edges.toList().chunked(2).forEach { pair ->
+            addVertex(outline, corners[pair[0]], floatArrayOf(0f,0f,1f))
+            addVertex(outline, corners[pair[1]], floatArrayOf(0f,0f,1f))
+        }
+        Matrix.setIdentityM(model, 0)
+        Matrix.multiplyMM(mvp, 0, viewProjection, 0, model, 0)
+        GLES20.glDisable(GLES20.GL_DEPTH_TEST)
+        GLES20.glLineWidth(2.5f)
+        drawMesh(createMesh(outline.toFloatArray(), GLES20.GL_LINES), floatArrayOf(.25f,.92f,.82f,1f), false)
+
+        val dots = mutableListOf<Float>()
+        corners.forEach { addVertex(dots, it, floatArrayOf(0f,0f,1f)) }
+        GLES20.glPointSize(13f)
+        drawMesh(createMesh(dots.toFloatArray(), GLES20.GL_POINTS), floatArrayOf(.95f,.98f,1f,1f), false)
+
+        val cx = item.x; val cy = item.y; val cz = item.z + item.sz / 2f
+        val reach = max(12f, max(item.sx, max(item.sy, item.sz)) * .9f)
+        fun axisLine(end: FloatArray, color: FloatArray) {
+            val line = mutableListOf<Float>()
+            addVertex(line, floatArrayOf(cx,cy,cz), floatArrayOf(0f,0f,1f))
+            addVertex(line, end, floatArrayOf(0f,0f,1f))
+            drawMesh(createMesh(line.toFloatArray(), GLES20.GL_LINES), color, false)
+            val point = mutableListOf<Float>()
+            addVertex(point, end, floatArrayOf(0f,0f,1f))
+            GLES20.glPointSize(15f)
+            drawMesh(createMesh(point.toFloatArray(), GLES20.GL_POINTS), color, false)
+        }
+        axisLine(floatArrayOf(cx + reach,cy,cz), floatArrayOf(1f,.28f,.28f,1f))
+        axisLine(floatArrayOf(cx,cy + reach,cz), floatArrayOf(.30f,.90f,.42f,1f))
+        axisLine(floatArrayOf(cx,cy,cz + reach), floatArrayOf(.30f,.58f,1f,1f))
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
     private fun drawMesh(mesh: GpuMesh, color: FloatArray, lit: Boolean) {
