@@ -272,7 +272,7 @@ private object StlExporter {
         val out=mutableListOf<Array<FloatArray>>(); val lat=12; val lon=24
         fun point(a:Int,b:Int):FloatArray {
             val phi=PI*a/lat; val theta=2*PI*b/lon
-            return floatArrayOf(o.x+o.sx/2*cos(theta)*sin(phi),o.y+o.sy/2*sin(theta)*sin(phi),o.z+o.sz/2+o.sz/2*cos(phi))
+            return floatArrayOf(o.x+o.sx/2*cos(theta).toFloat()*sin(phi).toFloat(),o.y+o.sy/2*sin(theta).toFloat()*sin(phi).toFloat(),o.z+o.sz/2+o.sz/2*cos(phi).toFloat())
         }
         for(a in 0 until lat) for(b in 0 until lon) {
             val p=point(a,b); val q=point(a+1,b); val r=point(a+1,b+1); val s=point(a,b+1)
