@@ -236,6 +236,39 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     }
     fun currentZoom(): Float = zoom
 
+    /**
+     * Converts pointer movement into signed movement along a face-center handle's
+     * single world axis. Perpendicular finger/stylus drift is discarded.
+     */
+    fun faceExtrudeDelta(handle: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): Float {
+        val item = objects.firstOrNull { it.id == selectedId } ?: return 0f
+        if (handle !in 8..13 || viewWidth <= 0 || viewHeight <= 0) return 0f
+
+        val centerX = item.x
+        val centerY = item.y
+        val centerZ = item.z + item.sz / 2f
+        val (origin, axis, direction) = when (handle) {
+            8 -> Triple(floatArrayOf(item.x - item.sx / 2f, centerY, centerZ), 0, -1f)
+            9 -> Triple(floatArrayOf(item.x + item.sx / 2f, centerY, centerZ), 0, 1f)
+            10 -> Triple(floatArrayOf(centerX, item.y - item.sy / 2f, centerZ), 1, -1f)
+            11 -> Triple(floatArrayOf(centerX, item.y + item.sy / 2f, centerZ), 1, 1f)
+            12 -> Triple(floatArrayOf(centerX, centerY, item.z), 2, -1f)
+            else -> Triple(floatArrayOf(centerX, centerY, item.z + item.sz), 2, 1f)
+        }
+        val worldStep = max(1f, max(item.sx, max(item.sy, item.sz)) * 0.25f)
+        val end = origin.copyOf()
+        end[axis] += direction * worldStep
+        val p0 = projectPoint(origin, viewWidth, viewHeight) ?: return 0f
+        val p1 = projectPoint(end, viewWidth, viewHeight) ?: return 0f
+        val vx = p1[0] - p0[0]
+        val vy = p1[1] - p0[1]
+        val screenLengthSquared = vx * vx + vy * vy
+        if (screenLengthSquared < 4f) return 0f
+        // Dot product is the least-squares projection onto the permitted screen direction.
+        val projectedPixels = (dx * vx + dy * vy) / sqrt(screenLengthSquared)
+        return projectedPixels * worldStep / sqrt(screenLengthSquared) * direction
+    }
+
     fun resizeSigns(handle: Int): FloatArray = when (handle) {
         in 0..7 -> floatArrayOf(if (handle and 1 == 0) -1f else 1f, if (handle and 2 == 0) -1f else 1f, if (handle and 4 == 0) -1f else 1f)
         8 -> floatArrayOf(-1f,0f,0f); 9 -> floatArrayOf(1f,0f,0f)
