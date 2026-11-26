@@ -29,6 +29,7 @@ internal class ModelGLSurfaceView(
     private var previousX = 0f
     private var previousY = 0f
     private var activePointers = 0
+    private var multiTouchGesture = false
     private var downX = 0f
     private var downY = 0f
     private var moved = false
@@ -64,8 +65,9 @@ internal class ModelGLSurfaceView(
         preserveEGLContextOnPause = true
     }
 
-    fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float, penMode: Boolean) {
-        sceneRenderer.updateScene(objects, selectedId, preset, zoom)
+    fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float, penMode: Boolean,
+                    cameraRequest: CameraRequest? = null) {
+        sceneRenderer.updateScene(objects, selectedId, preset, zoom, cameraRequest)
         this.penMode = penMode
     }
 
@@ -93,16 +95,17 @@ internal class ModelGLSurfaceView(
                 previousX = focus.first
                 previousY = focus.second
                 moved = true
+                multiTouchGesture = true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount >= 2) {
+                if (multiTouchGesture && event.pointerCount >= 2) {
                     val focus = pointerFocus(event)
                     val panDx = focus.first - previousX
                     val panDy = focus.second - previousY
                     if (abs(panDx) + abs(panDy) > 1f) sceneRenderer.panBy(panDx, panDy, height)
                     previousX = focus.first
                     previousY = focus.second
-                } else if (!scaleDetector.isInProgress && event.pointerCount == 1) {
+                } else if (!multiTouchGesture && !scaleDetector.isInProgress && event.pointerCount == 1) {
                     val dx = event.x - previousX
                     val dy = event.y - previousY
                     if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
@@ -140,14 +143,11 @@ internal class ModelGLSurfaceView(
                         sceneRenderer.orbitBy(dx * .45f, dy * .38f)
                     }
                 }
-                previousX = event.x; previousY = event.y
+                if (!multiTouchGesture) { previousX = event.x; previousY = event.y }
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 activePointers = event.pointerCount - 1
-                if (activePointers == 1) {
-                    val index = if (event.actionIndex == 0) 1 else 0
-                    previousX = event.getX(index); previousY = event.getY(index)
-                } else if (activePointers >= 2) {
+                if (activePointers > 0) {
                     val focus = pointerFocus(event, event.actionIndex)
                     previousX = focus.first; previousY = focus.second
                 }
@@ -158,13 +158,14 @@ internal class ModelGLSurfaceView(
                     post { onSelect(picked) }
                 }
                 activePointers = 0
+                multiTouchGesture = false
                 touchedObject = null
                 touchedResizeCorner = null
                 touchedMoveAxis = null
                 activeInputIsStylus = false
                 performClick()
             }
-            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null; activeInputIsStylus = false }
+            MotionEvent.ACTION_CANCEL -> { activePointers = 0; multiTouchGesture = false; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null; activeInputIsStylus = false }
         }
         return true
     }
@@ -187,6 +188,8 @@ internal class ModelGLSurfaceView(
         return true
     }
 }
+
+internal data class CameraRequest(val id: Long, val focusShapeId: Long?)
 
 private class ModelSceneRenderer : GLSurfaceView.Renderer {
     @Volatile private var objects: List<ModelObject> = emptyList()
@@ -213,10 +216,13 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     @Volatile private var targetX = 0f
     @Volatile private var targetY = 0f
     @Volatile private var targetZ = 18f
+    @Volatile private var pendingCameraRequest: CameraRequest? = null
+    private var handledCameraRequestId = Long.MIN_VALUE
     private val meshes = mutableMapOf<ShapeKind, GpuMesh>()
     private lateinit var grid: GpuMesh
 
-    fun updateScene(items: List<ModelObject>, selected: Long?, viewPreset: Int, currentZoom: Float) {
+    fun updateScene(items: List<ModelObject>, selected: Long?, viewPreset: Int, currentZoom: Float,
+                    cameraRequest: CameraRequest? = null) {
         objects = items.toList()
         selectedId = selected
         if (preset != viewPreset) {
@@ -232,6 +238,14 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             }
         }
         zoom = currentZoom.coerceIn(.35f, 3.5f)
+        pendingCameraRequest = cameraRequest
+    }
+
+    private fun applyCameraRequest() {
+        val request = pendingCameraRequest ?: return
+        if (request.id == handledCameraRequestId) return
+        handledCameraRequestId = request.id
+        if (request.focusShapeId != null) focusOn(request.focusShapeId) else recenter()
     }
 
     fun panBy(screenDx: Float, screenDy: Float, viewHeight: Int) {
@@ -245,9 +259,12 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val upX = (-sin(pitchRad) * sin(yawRad)).toFloat()
         val upY = (sin(pitchRad) * cos(yawRad)).toFloat()
         val upZ = cos(pitchRad).toFloat()
-        targetX -= (rightX * screenDx + upX * -screenDy) * worldPerPixel
-        targetY -= (rightY * screenDx + upY * -screenDy) * worldPerPixel
-        targetZ -= upZ * -screenDy * worldPerPixel
+        val maxStep = sceneSpan() * .08f
+        val panSensitivity = .7f
+        val dx = (rightX * screenDx + upX * -screenDy) * worldPerPixel * panSensitivity
+        val dy = (rightY * screenDx + upY * -screenDy) * worldPerPixel * panSensitivity
+        val dz = upZ * -screenDy * worldPerPixel * panSensitivity
+        moveTarget(dx.coerceIn(-maxStep, maxStep), dy.coerceIn(-maxStep, maxStep), dz.coerceIn(-maxStep, maxStep))
     }
 
     fun focusOn(id: Long?): Boolean {
@@ -256,8 +273,46 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         targetY = item.y
         targetZ = item.z + item.sz / 2f
         val extent = max(item.sx, max(item.sy, item.sz))
-        cameraDistance = (extent * 3.4f).coerceIn(65f, 1200f)
+        val aspect = width.toFloat() / height.coerceAtLeast(1)
+        cameraDistance = (extent * 3.4f / min(aspect, 1f)).coerceIn(65f, 4000f)
         return true
+    }
+
+    fun recenter() {
+        if (objects.isEmpty()) {
+            targetX = 0f; targetY = 0f; targetZ = 18f
+            cameraDistance = 340f
+            return
+        }
+        val minX = objects.minOf { it.x - it.sx / 2f }; val maxX = objects.maxOf { it.x + it.sx / 2f }
+        val minY = objects.minOf { it.y - it.sy / 2f }; val maxY = objects.maxOf { it.y + it.sy / 2f }
+        val minZ = objects.minOf { it.z }; val maxZ = objects.maxOf { it.z + it.sz }
+        targetX = (minX + maxX) / 2f; targetY = (minY + maxY) / 2f; targetZ = (minZ + maxZ) / 2f
+        val extent = max(maxX - minX, max(maxY - minY, maxZ - minZ)).coerceAtLeast(20f)
+        val aspect = width.toFloat() / height.coerceAtLeast(1)
+        cameraDistance = (extent * 2.2f / min(aspect, 1f)).coerceIn(65f, 4000f)
+    }
+
+    private fun sceneSpan(): Float {
+        if (objects.isEmpty()) return 1000f
+        val spanX = objects.maxOf { it.x + it.sx / 2f } - objects.minOf { it.x - it.sx / 2f }
+        val spanY = objects.maxOf { it.y + it.sy / 2f } - objects.minOf { it.y - it.sy / 2f }
+        val spanZ = objects.maxOf { it.z + it.sz } - objects.minOf { it.z }
+        val largestShape = objects.maxOf { max(it.sx, max(it.sy, it.sz)) }
+        return max(100f, max(largestShape, max(spanX, max(spanY, spanZ))))
+    }
+
+    private fun moveTarget(dx: Float, dy: Float, dz: Float) {
+        val span = sceneSpan()
+        val minX = (objects.minOfOrNull { it.x - it.sx / 2f } ?: -span) - span
+        val maxX = (objects.maxOfOrNull { it.x + it.sx / 2f } ?: span) + span
+        val minY = (objects.minOfOrNull { it.y - it.sy / 2f } ?: -span) - span
+        val maxY = (objects.maxOfOrNull { it.y + it.sy / 2f } ?: span) + span
+        val minZ = (objects.minOfOrNull { it.z } ?: -span) - span
+        val maxZ = (objects.maxOfOrNull { it.z + it.sz } ?: span) + span
+        targetX = (targetX + dx).coerceIn(minX, maxX)
+        targetY = (targetY + dy).coerceIn(minY, maxY)
+        targetZ = (targetZ + dz).coerceIn(minZ, maxZ)
     }
 
     fun orbitBy(dx: Float, dy: Float) {
@@ -454,6 +509,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        applyCameraRequest()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glUseProgram(program)
         val eye = cameraEye()

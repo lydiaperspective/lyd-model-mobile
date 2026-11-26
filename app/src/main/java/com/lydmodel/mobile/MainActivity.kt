@@ -73,6 +73,11 @@ private fun LydModelApp() {
     var penMode by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var panelWidth by remember { mutableFloatStateOf(290f) }
+    var cameraRequest by remember { mutableStateOf<CameraRequest?>(null) }
+    var nextCameraRequest by remember { mutableLongStateOf(0L) }
+    val requestCamera: (Long?) -> Unit = { shapeId ->
+        cameraRequest = CameraRequest(++nextCameraRequest, shapeId)
+    }
     val context = LocalContext.current
     val selected = objects.firstOrNull { it.id == selectedId }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/stl")) { uri ->
@@ -107,7 +112,8 @@ private fun LydModelApp() {
                                 } },
                                 { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } }, showHints = true)
+                                        } }, showHints = true, cameraRequest = cameraRequest,
+                                onCameraRequest = requestCamera)
                         }
                     } else {
                     TopBar(
@@ -137,7 +143,7 @@ private fun LydModelApp() {
                                         } },
                                         { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } })
+                                        } }, cameraRequest = cameraRequest, onCameraRequest = requestCamera)
                                 }
                             }
                             if (toolsExpanded) {
@@ -167,7 +173,7 @@ private fun LydModelApp() {
                                         1 -> o.copy(y = o.y + amount)
                                         else -> o.copy(z = o.z + amount)
                                     } }
-                                }, compact = compact)
+                                }, compact = compact, onFocusShape = { requestCamera(selected.id) })
                                 ShapeTray(onAdd = { kind ->
                                     val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
                                     objects = objects + obj; selectedId = obj.id
@@ -190,7 +196,7 @@ private fun LydModelApp() {
                                 } },
                                 { id, handle, dx, dy, dz -> objects = objects.map { obj ->
                                             if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz) else obj
-                                        } })
+                                        } }, cameraRequest = cameraRequest, onCameraRequest = requestCamera)
                         }
                         if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
                             objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
@@ -208,7 +214,7 @@ private fun LydModelApp() {
                                 1 -> o.copy(y = o.y + amount)
                                 else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
                             } }
-                        }, compact = compact)
+                        }, compact = compact, onFocusShape = { requestCamera(selected.id) })
                         if (toolsExpanded) ShapeTray(onAdd = { kind ->
                             val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
                             objects = objects + obj; selectedId = obj.id
@@ -343,7 +349,9 @@ private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float, penMode: Boolean = false,
     onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float, Float) -> Unit,
     onResize: (Long, Int, Float, Float, Float) -> Unit = { _, _, _, _, _ -> },
-    showHints: Boolean = true
+    showHints: Boolean = true,
+    cameraRequest: CameraRequest? = null,
+    onCameraRequest: (Long?) -> Unit = {}
 ) {
     var cameraPreset by remember { mutableIntStateOf(6) }
     Box(Modifier.fillMaxSize()) {
@@ -351,10 +359,10 @@ private fun ModelViewport(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
                 ModelGLSurfaceView(context, onSelect, onMove, onResize, onZoom).also {
-                    it.updateScene(objects, selectedId, cameraPreset, zoom, penMode)
+                    it.updateScene(objects, selectedId, cameraPreset, zoom, penMode, cameraRequest)
                 }
             },
-            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom, penMode) }
+            update = { view -> view.updateScene(objects, selectedId, cameraPreset, zoom, penMode, cameraRequest) }
         )
         Row(Modifier.align(Alignment.TopStart).padding(8.dp)
             .horizontalScroll(rememberScrollState())
@@ -367,6 +375,7 @@ private fun ModelViewport(
             TextButton(onClick = { cameraPreset = 4 }) { Text("Left", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { cameraPreset = 5 }) { Text("Bottom", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { cameraPreset = 6 }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
+            TextButton(onClick = { onCameraRequest(null) }) { Text("Recenter", color = Color.White, fontSize = 10.sp) }
         }
         if (showHints) {
             Text(if (penMode) "Touch: orbit / pinch zoom  •  Pen: select, move and resize" else "Drag empty space to orbit  •  Drag object to move  •  Pinch to zoom",
@@ -378,7 +387,7 @@ private fun ModelViewport(
 }
 
 @Composable
-private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false) {
+private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false, onFocusShape: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -387,7 +396,13 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
             IconButton(onClick = onDuplicate, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ContentCopy, "Duplicate", tint = Color(0xFFB5C6DA)) }
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF8B8B)) }
         }
-        Text("SIZE  •  MILLIMETRES", color = Color(0xFF8EA0B5), fontSize = 10.sp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("SIZE  •  MILLIMETRES", color = Color(0xFF8EA0B5), fontSize = 10.sp,
+                modifier = Modifier.weight(1f))
+            TextButton(onClick = onFocusShape, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                Text("Focus Shape", fontSize = 11.sp)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DimensionControl("Width", obj.sx, Modifier.weight(1f)) { onSize(0, it) }
             DimensionControl("Depth", obj.sy, Modifier.weight(1f)) { onSize(1, it) }
