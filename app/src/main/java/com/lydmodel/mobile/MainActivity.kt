@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -220,8 +221,6 @@ private fun LydModelApp() {
     }
 }
 
-@Composable
-
 private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float, dz: Float): ModelObject {
     val sxSign = when (handle) { 0,2,4,6,8 -> -1f; 1,3,5,7,9 -> 1f; else -> 0f }
     val sySign = when (handle) { 0,1,4,5,10 -> -1f; 2,3,6,7,11 -> 1f; else -> 0f }
@@ -236,6 +235,7 @@ private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float
         z=obj.z + szSign * actualZ / 2f)
 }
 
+@Composable
 private fun WorkspaceLabel(compact: Boolean) {
     Text("UNTITLED DESIGN  •  MILLIMETRES",
         Modifier.padding(start = 8.dp, top = if (compact) 2.dp else 8.dp),
