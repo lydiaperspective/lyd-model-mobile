@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -66,7 +67,10 @@ internal data class ModelObject(
     val x: Float = 0f, val y: Float = 0f, val z: Float = 0f,
     val sx: Float = 20f, val sy: Float = 20f, val sz: Float = 20f,
     val name: String = kind.name.lowercase().replaceFirstChar { it.uppercase() },
-    val visible: Boolean = true
+    val visible: Boolean = true,
+    val hollow: Boolean = false,
+    val groupId: Long? = null,
+    val mergeId: Long? = null
 )
 
 internal data class DimensionMarker(val axis: Int, val x: Float, val y: Float, val value: Float)
@@ -75,7 +79,10 @@ internal data class DimensionMarker(val axis: Int, val x: Float, val y: Float, v
 private fun LydModelApp() {
     var objects by remember { mutableStateOf(listOf(ModelObject(1, ShapeKind.CUBE))) }
     var selectedId by remember { mutableStateOf<Long?>(1) }
+    var checkedIds by remember { mutableStateOf(setOf<Long>()) }
     var nextId by remember { mutableLongStateOf(2L) }
+    var nextGroupId by remember { mutableLongStateOf(1L) }
+    var nextMergeId by remember { mutableLongStateOf(1L) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var status by remember { mutableStateOf("Ready to design") }
     var toolsExpanded by remember { mutableStateOf(true) }
@@ -98,23 +105,19 @@ private fun LydModelApp() {
     val resizeRemainders = remember { mutableMapOf<Long, FloatArray>() }
     val moveShape: (Long, Float, Float, Float) -> Unit = { id, dx, dy, dz ->
         val remainder = moveRemainders.getOrPut(id) { floatArrayOf(0f, 0f, 0f) }
-        objects = objects.map { obj ->
-            if (obj.id != id) obj else {
-                val rawX = obj.x + dx + remainder[0]
-                val rawY = obj.y + dy + remainder[1]
-                val rawZ = obj.z + dz + remainder[2]
-                val nextX = snapToStep(rawX, gridSnap)
-                val nextY = snapToStep(rawY, gridSnap)
-                val nextZ = snapToStep(rawZ, gridSnap)
-                remainder[0] = rawX - nextX; remainder[1] = rawY - nextY; remainder[2] = rawZ - nextZ
-                obj.copy(x = nextX, y = nextY, z = nextZ)
-            }
-        }
+        objects = moveShapeSet(objects, id, dx, dy, dz, gridSnap, remainder)
     }
     val resizeShape: (Long, Int, Float, Float, Float) -> Unit = { id, handle, dx, dy, dz ->
         val remainder = resizeRemainders.getOrPut(id) { floatArrayOf(0f, 0f, 0f) }
-        objects = objects.map { obj ->
-            if (obj.id == id) resizeFromHandle(obj, handle, dx, dy, dz, resizeStep, remainder) else obj
+        objects = resizeShapeSet(objects, id, handle, dx, dy, dz, resizeStep, remainder)
+    }
+    val shapeAction: (String, List<Long>) -> Unit = { action, ids ->
+        when (action) {
+            "Group" -> if (ids.size > 1) { val gid = nextGroupId++; objects = objects.map { if (it.id in ids) it.copy(groupId = gid) else it } }
+            "Ungroup" -> { val groups = objects.filter { it.id in ids }.mapNotNull { it.groupId }.toSet(); objects = objects.map { if (it.groupId != null && it.groupId in groups) it.copy(groupId = null) else it } }
+            "Merge" -> if (ids.size > 1) { val mid = nextMergeId++; objects = objects.map { if (it.id in ids) it.copy(mergeId = mid) else it } }
+            "Unmerge" -> { val merges = objects.filter { it.id in ids }.mapNotNull { it.mergeId }.toSet(); objects = objects.map { if (it.mergeId != null && it.mergeId in merges) it.copy(mergeId = null) else it } }
+            "Toggle solid / hole" -> objects = objects.map { if (it.id in ids) it.copy(hollow = !it.hollow) else it }
         }
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/stl")) { uri ->
@@ -152,11 +155,8 @@ private fun LydModelApp() {
                                 onCameraRequest = requestCamera,
                                 onEditDimension = { id, axis, value ->
                                     resizeRemainders.remove(id)
-                                    objects = objects.map { obj ->
-                                    if (obj.id != id) obj else when (axis) {
-                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
-                                    }
-                                } })
+                                    objects = setShapeDimension(objects, id, axis, value)
+                                })
                         }
                     } else {
                     TopBar(
@@ -171,6 +171,7 @@ private fun LydModelApp() {
                         onTogglePenMode = { penMode = !penMode }
                     )
                     if (wideLayout) {
+                        val density = LocalDensity.current.density
                         Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -184,15 +185,20 @@ private fun LydModelApp() {
                                 workplaneDepth = workplaneDepth, onCameraRequest = requestCamera,
                                 onEditDimension = { id, axis, value ->
                                     resizeRemainders.remove(id)
-                                    objects = objects.map { obj ->
-                                    if (obj.id != id) obj else when (axis) {
-                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
-                                    }
-                                } })
+                                    objects = setShapeDimension(objects, id, axis, value)
+                                })
                                 }
                             }
                             if (toolsExpanded) {
-                            Column(Modifier.width((availableWidth * .32f).coerceIn(280.dp, 360.dp))
+                            Box(Modifier.width(24.dp).fillMaxHeight().pointerInput(density, panelWidth) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    panelWidth = (panelWidth - drag.x / density).coerceIn(210f, availableWidth.value * .55f)
+                                }
+                            }, contentAlignment = Alignment.Center) {
+                                Box(Modifier.width(4.dp).height(56.dp).background(Color(0xFF536579), RoundedCornerShape(4.dp)))
+                            }
+                            Column(Modifier.width(panelWidth.dp.coerceIn(210.dp, availableWidth * .55f))
                                 .fillMaxHeight().background(Color(0xFF1A2532), RoundedCornerShape(18.dp))
                                 .verticalScroll(rememberScrollState()).padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -210,18 +216,17 @@ private fun LydModelApp() {
                                     objects = objects + copy
                                     selectedId = copy.id
                                 }, { axis, amount ->
-                                    objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
-                                        0 -> o.copy(x = o.x + amount)
-                                        1 -> o.copy(y = o.y + amount)
-                                        else -> o.copy(z = o.z + amount)
-                                    } }
-                                }, compact = compact, onFocusShape = { requestCamera(selected.id) })
+                                    objects = moveRelated(objects, selected.id,
+                                        if (axis == 0) amount else 0f, if (axis == 1) amount else 0f,
+                                        if (axis == 2) amount else 0f)
+                                }, compact = compact, onFocusShape = { requestCamera(selected.id) },
+                                    onToggleHollow = { objects = objects.map { if (it.id == selected.id) it.copy(hollow = !it.hollow) else it } })
                                 LayersPanel(objects, selectedId, { selectedId = it }, { id, visible ->
                                     objects = objects.map { if (it.id == id) it.copy(visible = visible) else it }
                                 }, { id ->
                                     objects = objects.filterNot { it.id == id }
                                     if (selectedId == id) selectedId = objects.lastOrNull()?.id
-                                })
+                                }, onRename = { id, name -> objects = objects.map { if (it.id == id) it.copy(name = name) else it } }, onShapeAction = shapeAction)
                                 ShapeTray(onAdd = { kind ->
                                     val obj = newShape(kind, objects, nextId++, objects.size)
                                     objects = objects + obj; selectedId = obj.id
@@ -234,7 +239,7 @@ private fun LydModelApp() {
                         }
                     } else {
                         WorkspaceLabel(compact)
-                        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)
+                        Box(Modifier.weight(if (toolsExpanded) .62f else 1f).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)
                             .background(Color(0xFF151E29), RoundedCornerShape(22.dp))) {
                             ModelViewport(objects, selectedId, zoom, penMode,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
@@ -243,37 +248,34 @@ private fun LydModelApp() {
                                 workplaneDepth = workplaneDepth, onCameraRequest = requestCamera,
                                 onEditDimension = { id, axis, value ->
                                     resizeRemainders.remove(id)
-                                    objects = objects.map { obj ->
-                                    if (obj.id != id) obj else when (axis) {
-                                        0 -> obj.copy(sx = value); 1 -> obj.copy(sy = value); else -> obj.copy(sz = value)
-                                    }
-                                } })
+                                    objects = setShapeDimension(objects, id, axis, value)
+                                })
                         }
-                        if (toolsExpanded && selected != null) Inspector(selected, {
+                        if (toolsExpanded) Column(Modifier.weight(.38f).fillMaxWidth()
+                            .verticalScroll(rememberScrollState()).padding(bottom = 4.dp)) {
+                        if (selected != null) Inspector(selected, {
                             objects = objects.filterNot { it.id == selected.id }
                             selectedId = objects.lastOrNull()?.id
                         }, {
                             val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f,
                                 name = "${selected.name} copy")
                             objects = objects + copy; selectedId = copy.id
-                        }, { axis, amount ->
-                            objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
-                                0 -> o.copy(x = o.x + amount)
-                                1 -> o.copy(y = o.y + amount)
-                                else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
-                            } }
-                        }, compact = compact, onFocusShape = { requestCamera(selected.id) })
-                        if (toolsExpanded) LayersPanel(objects, selectedId, { selectedId = it }, { id, visible ->
+                        }, { axis, amount -> objects = moveRelated(objects, selected.id,
+                            if (axis == 0) amount else 0f, if (axis == 1) amount else 0f, if (axis == 2) amount else 0f) },
+                            compact = compact, onFocusShape = { requestCamera(selected.id) },
+                            onToggleHollow = { objects = objects.map { if (it.id == selected.id) it.copy(hollow = !it.hollow) else it } })
+                        LayersPanel(objects, selectedId, { selectedId = it }, { id, visible ->
                             objects = objects.map { if (it.id == id) it.copy(visible = visible) else it }
                         }, { id ->
                             objects = objects.filterNot { it.id == id }
                             if (selectedId == id) selectedId = objects.lastOrNull()?.id
-                        })
-                        if (toolsExpanded) ShapeTray(onAdd = { kind ->
+                        }, onRename = { id, name -> objects = objects.map { if (it.id == id) it.copy(name = name) else it } }, onShapeAction = shapeAction)
+                        ShapeTray(onAdd = { kind ->
                             val obj = newShape(kind, objects, nextId++, objects.size)
                             objects = objects + obj; selectedId = obj.id
                             status = kind.name.lowercase().replaceFirstChar { it.uppercase() } + " added"
                         }, compact = compact)
+                        }
                         Text(status, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                             color = Color(0xFF8292A6), fontSize = 10.sp, maxLines = 1)
                     }
@@ -315,7 +317,81 @@ private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float
     return obj.copy(sx=nextX, sy=nextY, sz=nextZ,
         x=obj.x + sxSign * actualX / 2f,
         y=obj.y + sySign * actualY / 2f,
-        z=obj.z + szSign * actualZ / 2f)
+        z=obj.z + if (szSign < 0f) -actualZ else 0f)
+}
+
+private fun relatedShapes(objects: List<ModelObject>, id: Long): List<ModelObject> {
+    val shape = objects.firstOrNull { it.id == id } ?: return emptyList()
+    return when {
+        shape.groupId != null -> objects.filter { it.groupId == shape.groupId }
+        shape.mergeId != null -> objects.filter { it.mergeId == shape.mergeId }
+        else -> listOf(shape)
+    }
+}
+
+private fun shapeBounds(shapes: List<ModelObject>): ModelObject? {
+    if (shapes.isEmpty()) return null
+    val minX = shapes.minOf { it.x - it.sx / 2f }; val maxX = shapes.maxOf { it.x + it.sx / 2f }
+    val minY = shapes.minOf { it.y - it.sy / 2f }; val maxY = shapes.maxOf { it.y + it.sy / 2f }
+    val minZ = shapes.minOf { it.z }; val maxZ = shapes.maxOf { it.z + it.sz }
+    val first = shapes.first()
+    return ModelObject(first.id, ShapeKind.CUBE, (minX + maxX) / 2f, (minY + maxY) / 2f,
+        minZ, maxX - minX, maxY - minY, maxZ - minZ, name = first.name,
+        groupId = first.groupId, mergeId = first.mergeId)
+}
+
+private fun transformShapeSet(shapes: List<ModelObject>, oldBounds: ModelObject, newBounds: ModelObject): List<ModelObject> {
+    val sxScale = newBounds.sx / oldBounds.sx.coerceAtLeast(.1f)
+    val syScale = newBounds.sy / oldBounds.sy.coerceAtLeast(.1f)
+    val szScale = newBounds.sz / oldBounds.sz.coerceAtLeast(.1f)
+    return shapes.map { shape -> shape.copy(
+        x = newBounds.x + (shape.x - oldBounds.x) * sxScale,
+        y = newBounds.y + (shape.y - oldBounds.y) * syScale,
+        z = newBounds.z + (shape.z - oldBounds.z) * szScale,
+        sx = (shape.sx * sxScale).coerceAtLeast(.1f),
+        sy = (shape.sy * syScale).coerceAtLeast(.1f),
+        sz = (shape.sz * szScale).coerceAtLeast(.1f)
+    ) }
+}
+
+private fun resizeShapeSet(objects: List<ModelObject>, id: Long, handle: Int,
+                           dx: Float, dy: Float, dz: Float, step: Float, remainder: FloatArray): List<ModelObject> {
+    val shapes = relatedShapes(objects, id)
+    val bounds = shapeBounds(shapes) ?: return objects
+    val resizedBounds = resizeFromHandle(bounds, handle, dx, dy, dz, step, remainder)
+    val resized = transformShapeSet(shapes, bounds, resizedBounds).associateBy { it.id }
+    return objects.map { resized[it.id] ?: it }
+}
+
+private fun setShapeDimension(objects: List<ModelObject>, id: Long, axis: Int, value: Float): List<ModelObject> {
+    val shapes = relatedShapes(objects, id)
+    val bounds = shapeBounds(shapes) ?: return objects
+    val adjusted = when (axis) {
+        0 -> bounds.copy(sx = value)
+        1 -> bounds.copy(sy = value)
+        else -> bounds.copy(sz = value)
+    }
+    val resized = transformShapeSet(shapes, bounds, adjusted).associateBy { it.id }
+    return objects.map { resized[it.id] ?: it }
+}
+
+private fun moveShapeSet(objects: List<ModelObject>, id: Long, dx: Float, dy: Float, dz: Float,
+                         snap: Float, remainder: FloatArray): List<ModelObject> {
+    val shapes = relatedShapes(objects, id)
+    val bounds = shapeBounds(shapes) ?: return objects
+    val rawX = bounds.x + dx + remainder[0]
+    val rawY = bounds.y + dy + remainder[1]
+    val rawZ = bounds.z + dz + remainder[2]
+    val nextX = snapToStep(rawX, snap); val nextY = snapToStep(rawY, snap); val nextZ = snapToStep(rawZ, snap)
+    remainder[0] = rawX - nextX; remainder[1] = rawY - nextY; remainder[2] = rawZ - nextZ
+    val offsetX = nextX - bounds.x; val offsetY = nextY - bounds.y; val offsetZ = nextZ - bounds.z
+    val ids = shapes.map { it.id }.toSet()
+    return objects.map { if (it.id in ids) it.copy(x = it.x + offsetX, y = it.y + offsetY, z = it.z + offsetZ) else it }
+}
+
+private fun moveRelated(objects: List<ModelObject>, id: Long, dx: Float, dy: Float, dz: Float): List<ModelObject> {
+    val ids = relatedShapes(objects, id).map { it.id }.toSet()
+    return objects.map { if (it.id in ids) it.copy(x = it.x + dx, y = it.y + dy, z = (it.z + dz).coerceAtLeast(0f)) else it }
 }
 
 private fun newShape(kind: ShapeKind, objects: List<ModelObject>, id: Long, index: Int): ModelObject {
@@ -327,8 +403,13 @@ private fun newShape(kind: ShapeKind, objects: List<ModelObject>, id: Long, inde
 @Composable
 private fun LayersPanel(
     objects: List<ModelObject>, selectedId: Long?, onSelect: (Long) -> Unit,
-    onVisibilityChange: (Long, Boolean) -> Unit, onDelete: (Long) -> Unit
+    onVisibilityChange: (Long, Boolean) -> Unit, onDelete: (Long) -> Unit,
+    onRename: (Long, String) -> Unit = { _, _ -> }, onShapeAction: (String, List<Long>) -> Unit = { _, _ -> }
 ) {
+    var checked by remember { mutableStateOf(setOf<Long>()) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var renameId by remember { mutableStateOf<Long?>(null) }
+    var renameText by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(10.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 3.dp),
@@ -336,6 +417,22 @@ private fun LayersPanel(
             Text("SHAPES", color = Color(0xFF8EA0B5), fontSize = 10.sp,
                 fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, modifier = Modifier.weight(1f))
             Text("${objects.size}", color = Color(0xFF8292A6), fontSize = 10.sp)
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Default.MoreVert, "Shape actions", tint = Color(0xFFB5C6DA))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    listOf("Group", "Ungroup", "Merge", "Unmerge", "Toggle solid / hole", "Rename selected").forEach { action ->
+                        DropdownMenuItem(text = { Text(action) }, onClick = {
+                            menuOpen = false
+                            if (action == "Rename selected") {
+                                renameId = selectedId
+                                renameText = objects.firstOrNull { it.id == selectedId }?.name.orEmpty()
+                            } else onShapeAction(action, checked.ifEmpty { setOfNotNull(selectedId) }.toList())
+                        })
+                    }
+                }
+            }
         }
         if (objects.isEmpty()) {
             Text("Add a shape to get started", color = Color(0xFF8292A6), fontSize = 11.sp,
@@ -349,6 +446,9 @@ private fun LayersPanel(
                         .clickable { onSelect(shape.id) }
                         .padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = shape.id in checked, onCheckedChange = { isChecked ->
+                            checked = if (isChecked) checked + shape.id else checked - shape.id
+                        }, modifier = Modifier.size(38.dp))
                         Box(Modifier.size(25.dp).background(Color(0xFF34485C), RoundedCornerShape(7.dp)),
                             contentAlignment = Alignment.Center) {
                             Text(shape.name.firstOrNull()?.uppercase() ?: "S", color = Color(0xFF55D6BE),
@@ -360,6 +460,8 @@ private fun LayersPanel(
                             Text(shape.kind.name.lowercase().replaceFirstChar { it.uppercase() },
                                 color = Color(0xFF8292A6), fontSize = 9.sp, maxLines = 1)
                         }
+                        if (shape.hollow) Text("HOLE", color = Color(0xFFFFB86B), fontSize = 8.sp,
+                            modifier = Modifier.padding(end = 2.dp))
                         IconButton(onClick = { onVisibilityChange(shape.id, !shape.visible) },
                             modifier = Modifier.size(34.dp)) {
                             Icon(if (shape.visible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
@@ -375,6 +477,12 @@ private fun LayersPanel(
             }
         }
     }
+    if (renameId != null) AlertDialog(onDismissRequest = { renameId = null },
+        title = { Text("Rename shape") },
+        text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true,
+            label = { Text("Name") }) },
+        confirmButton = { TextButton(onClick = { renameId?.let { onRename(it, renameText.trim().ifBlank { "Shape" }) }; renameId = null }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = { renameId = null }) { Text("Cancel") } })
 }
 
 @Composable
@@ -666,7 +774,7 @@ private fun SettingsDialog(
 }
 
 @Composable
-private fun Inspector(obj: ModelObject, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false, onFocusShape: () -> Unit = {}) {
+private fun Inspector(obj: ModelObject, onDelete: () -> Unit, onDuplicate: () -> Unit, onNudge: (Int, Float) -> Unit, compact: Boolean = false, onFocusShape: () -> Unit = {}, onToggleHollow: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)
         .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -674,6 +782,9 @@ private fun Inspector(obj: ModelObject, onDelete: () -> Unit, onDuplicate: () ->
                 fontSize = 12.sp, modifier = Modifier.weight(1f))
             TextButton(onClick = onFocusShape, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
                 Text("Focus", fontSize = 11.sp)
+            }
+            TextButton(onClick = onToggleHollow, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                Text(if (obj.hollow) "Make solid" else "Make hole", fontSize = 10.sp)
             }
             IconButton(onClick = onDuplicate, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.ContentCopy, "Duplicate", tint = Color(0xFFB5C6DA)) }
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF8B8B)) }
@@ -718,18 +829,21 @@ private fun ShapeTray(onAdd: (ShapeKind) -> Unit, compact: Boolean = false) {
 private object StlExporter {
     fun export(objects: List<ModelObject>): String = buildString {
         appendLine("solid lyd_model")
-        objects.filter { it.visible }.forEach { obj ->
-            val facets = when(obj.kind) { ShapeKind.CUBE -> cube(obj); ShapeKind.SPHERE -> sphere(obj); ShapeKind.CYLINDER -> cylinder(obj) }
-            facets.forEach { t ->
+        val merged = objects.filter { it.mergeId != null }.groupBy { it.mergeId }
+        val facets = mutableListOf<Array<FloatArray>>()
+        objects.filter { it.visible && it.mergeId == null && !it.hollow }.forEach { facets.addAll(triangles(it)) }
+        merged.values.forEach { group -> facets.addAll(CsgBoolean.combine(group)) }
+        facets.forEach { t ->
                 val n = normal(t[0],t[1],t[2])
                 appendLine(" facet normal ${fmt(n[0])} ${fmt(n[1])} ${fmt(n[2])}")
                 appendLine("  outer loop")
                 t.forEach { v -> appendLine("   vertex ${fmt(v[0])} ${fmt(v[1])} ${fmt(v[2])}") }
                 appendLine("  endloop"); appendLine(" endfacet")
-            }
         }
         appendLine("endsolid lyd_model")
     }
+    internal fun triangles(obj: ModelObject): List<Array<FloatArray>> =
+        when(obj.kind) { ShapeKind.CUBE -> cube(obj); ShapeKind.SPHERE -> sphere(obj); ShapeKind.CYLINDER -> cylinder(obj) }
     private fun fmt(v: Float) = String.format(Locale.US, "%.5f", v)
     private fun normal(a: FloatArray,b: FloatArray,c: FloatArray): FloatArray {
         val u=floatArrayOf(b[0]-a[0],b[1]-a[1],b[2]-a[2]); val v=floatArrayOf(c[0]-a[0],c[1]-a[1],c[2]-a[2])

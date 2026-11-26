@@ -230,6 +230,8 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     @Volatile private var pendingCameraRequest: CameraRequest? = null
     private var handledCameraRequestId = Long.MIN_VALUE
     private val meshes = mutableMapOf<ShapeKind, GpuMesh>()
+    private var booleanMeshSource: List<ModelObject> = emptyList()
+    private var booleanMeshes: List<Pair<GpuMesh, FloatArray>> = emptyList()
     private lateinit var grid: GpuMesh
 
     fun updateScene(items: List<ModelObject>, selected: Long?, viewPreset: Int, currentZoom: Float,
@@ -262,6 +264,21 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
         if (request.focusShapeId != null) focusOn(request.focusShapeId) else recenter()
     }
 
+    private fun selectedGeometry(): ModelObject? {
+        val selected = objects.firstOrNull { it.id == selectedId && it.visible } ?: return null
+        val members = when {
+            selected.groupId != null -> objects.filter { it.groupId == selected.groupId && it.visible }
+            selected.mergeId != null -> objects.filter { it.mergeId == selected.mergeId && it.visible }
+            else -> listOf(selected)
+        }
+        if (members.size == 1) return selected
+        val minX = members.minOf { it.x - it.sx / 2f }; val maxX = members.maxOf { it.x + it.sx / 2f }
+        val minY = members.minOf { it.y - it.sy / 2f }; val maxY = members.maxOf { it.y + it.sy / 2f }
+        val minZ = members.minOf { it.z }; val maxZ = members.maxOf { it.z + it.sz }
+        return selected.copy(x = (minX + maxX) / 2f, y = (minY + maxY) / 2f, z = minZ,
+            sx = maxX - minX, sy = maxY - minY, sz = maxZ - minZ)
+    }
+
     fun panBy(screenDx: Float, screenDy: Float, viewHeight: Int) {
         if (viewHeight <= 0) return
         val yawRad = Math.toRadians(yaw.toDouble())
@@ -283,7 +300,9 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     }
 
     fun focusOn(id: Long?): Boolean {
-        val item = objects.firstOrNull { it.id == id && it.visible } ?: return false
+        val previous = selectedId
+        selectedId = id
+        val item = selectedGeometry() ?: run { selectedId = previous; return false }
         targetX = item.x
         targetY = item.y
         targetZ = item.z + item.sz / 2f
@@ -349,7 +368,7 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     fun selectedObjectId(): Long? = selectedId?.takeIf { id -> objects.any { it.id == id && it.visible } }
 
     private fun reportDimensionMarkers() {
-        val item = objects.firstOrNull { it.id == selectedId && it.visible }
+        val item = selectedGeometry()
         val next = if (item == null || width <= 0 || height <= 0) emptyList() else {
             val margin = max(5f, max(item.sx, max(item.sy, item.sz)) * .18f)
             listOf(
@@ -387,12 +406,13 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     }
 
     fun pickMoveAxis(x: Float, y: Float, viewWidth: Int, viewHeight: Int, hitRadius: Float): Int? {
-        val item=objects.firstOrNull { it.id==selectedId && it.visible } ?: return null
+        val item=selectedGeometry() ?: return null
         if(viewWidth<=0 || viewHeight<=0) return null
         val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
         val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
+        val zReach=max(32f,max(item.sx,max(item.sy,item.sz))*1.8f)
         val origin=projectPoint(floatArrayOf(cx,cy,cz),viewWidth,viewHeight) ?: return null
-        val ends=arrayOf(floatArrayOf(cx+reach,cy,cz),floatArrayOf(cx,cy+reach,cz),floatArrayOf(cx,cy,cz+reach))
+        val ends=arrayOf(floatArrayOf(cx+reach,cy,cz),floatArrayOf(cx,cy+reach,cz),floatArrayOf(cx,cy,cz+zReach))
         return ends.mapIndexedNotNull { axis,p ->
             val end=projectPoint(p,viewWidth,viewHeight) ?: return@mapIndexedNotNull null
             val vx=end[0]-origin[0]; val vy=end[1]-origin[1]
@@ -405,12 +425,13 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     }
 
     fun axisDragDelta(axis: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): FloatArray {
-        val item=objects.firstOrNull { it.id==selectedId && it.visible } ?: return floatArrayOf(0f,0f,0f)
+        val item=selectedGeometry() ?: return floatArrayOf(0f,0f,0f)
         if(viewWidth<=0 || viewHeight<=0) return floatArrayOf(0f,0f,0f)
         val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
         val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
+        val zReach=max(32f,max(item.sx,max(item.sy,item.sz))*1.8f)
         val origin=projectPoint(floatArrayOf(cx,cy,cz),viewWidth,viewHeight) ?: return floatArrayOf(0f,0f,0f)
-        val endPoint=when(axis) { 0->floatArrayOf(cx+reach,cy,cz); 1->floatArrayOf(cx,cy+reach,cz); else->floatArrayOf(cx,cy,cz+reach) }
+        val endPoint=when(axis) { 0->floatArrayOf(cx+reach,cy,cz); 1->floatArrayOf(cx,cy+reach,cz); else->floatArrayOf(cx,cy,cz+zReach) }
         val end=projectPoint(endPoint,viewWidth,viewHeight) ?: return floatArrayOf(0f,0f,0f)
         val vx=end[0]-origin[0]; val vy=end[1]-origin[1]; val len2=vx*vx+vy*vy
         if(len2<100f) return floatArrayOf(0f,0f,0f)
@@ -424,7 +445,7 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
      * single world axis. Perpendicular finger/stylus drift is discarded.
      */
     fun faceExtrudeDelta(handle: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): Float {
-        val item = objects.firstOrNull { it.id == selectedId && it.visible } ?: return 0f
+        val item = selectedGeometry() ?: return 0f
         if (handle !in 8..13 || viewWidth <= 0 || viewHeight <= 0) return 0f
 
         val centerX = item.x
@@ -460,7 +481,7 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
     }
 
     fun pickResizeHandle(x: Float, y: Float, viewWidth: Int, viewHeight: Int, hitRadius: Float): Int? {
-        val item = objects.firstOrNull { it.id == selectedId && it.visible } ?: return null
+        val item = selectedGeometry() ?: return null
         if (viewWidth <= 0 || viewHeight <= 0) return null
         val x0=item.x-item.sx/2; val x1=item.x+item.sx/2
         val y0=item.y-item.sy/2; val y1=item.y+item.sy/2
@@ -571,12 +592,33 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
         Matrix.multiplyMM(viewProjection, 0, projection, 0, view, 0)
         GLES20.glUniform3f(lightHandle, -.4f, -.5f, 1f)
 
+        val mergedItems = objects.filter { it.mergeId != null }
+        if (mergedItems != booleanMeshSource) {
+            booleanMeshSource = mergedItems
+            booleanMeshes = mergedItems.groupBy { it.mergeId }.values.mapNotNull { group ->
+                val tris = runCatching { CsgBoolean.combine(group) }.getOrDefault(emptyList())
+                if (tris.isEmpty()) null else {
+                    val data = mutableListOf<Float>()
+                    tris.forEach { tri ->
+                        val a=tri[0]; val b=tri[1]; val c=tri[2]
+                        val ux=b[0]-a[0]; val uy=b[1]-a[1]; val uz=b[2]-a[2]
+                        val vx=c[0]-a[0]; val vy=c[1]-a[1]; val vz=c[2]-a[2]
+                        val n=sqrt((uy*vz-uz*vy)*(uy*vz-uz*vy)+(uz*vx-ux*vz)*(uz*vx-ux*vz)+(ux*vy-uy*vx)*(ux*vy-uy*vx)).coerceAtLeast(1e-6f)
+                        val nx=(uy*vz-uz*vy)/n; val ny=(uz*vx-ux*vz)/n; val nz=(ux*vy-uy*vx)/n
+                        tri.forEach { p -> data.add(p[0]); data.add(p[1]); data.add(p[2]); data.add(nx); data.add(ny); data.add(nz) }
+                    }
+                    createMesh(data.toFloatArray()) to floatArrayOf(.36f,.70f,.68f,1f)
+                }
+            }
+        }
+
         Matrix.setIdentityM(model, 0)
         Matrix.multiplyMM(mvp, 0, viewProjection, 0, model, 0)
         drawMesh(grid, floatArrayOf(.15f, .20f, .26f, 1f), false)
 
         objects.forEach { item ->
             if (!item.visible) return@forEach
+            if (item.mergeId != null) return@forEach
             Matrix.setIdentityM(model, 0)
             Matrix.translateM(model, 0, item.x, item.y, item.z + item.sz / 2f)
             Matrix.scaleM(model, 0, item.sx, item.sy, item.sz)
@@ -586,14 +628,25 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
                 ShapeKind.SPHERE -> floatArrayOf(.68f, .43f, .90f, 1f)
                 ShapeKind.CYLINDER -> floatArrayOf(.24f, .72f, .63f, 1f)
             }
+            if (item.hollow) {
+                base[0] = 1f; base[1] = .55f; base[2] = .20f; base[3] = .42f
+                GLES20.glEnable(GLES20.GL_BLEND)
+                GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            }
             if (item.id == selectedId) {
                 base[0] = (base[0] * 1.18f).coerceAtMost(1f)
                 base[1] = (base[1] * 1.18f).coerceAtMost(1f)
                 base[2] = (base[2] * 1.18f).coerceAtMost(1f)
             }
             drawMesh(meshes[item.kind] ?: return@forEach, base, true)
-            if (item.id == selectedId) drawSelectionHandles(item)
+            if (item.hollow) GLES20.glDisable(GLES20.GL_BLEND)
         }
+        booleanMeshes.forEach { (mesh, color) ->
+            Matrix.setIdentityM(model,0)
+            Matrix.multiplyMM(mvp,0,viewProjection,0,model,0)
+            drawMesh(mesh,color,true)
+        }
+        selectedGeometry()?.let(::drawSelectionHandles)
         reportDimensionMarkers()
     }
 
@@ -640,7 +693,7 @@ private class ModelSceneRenderer(private val onDimensionMarkers: (List<Dimension
         }
         axisLine(floatArrayOf(cx + reach,cy,cz), floatArrayOf(1f,.28f,.28f,1f))
         axisLine(floatArrayOf(cx,cy + reach,cz), floatArrayOf(.30f,.90f,.42f,1f))
-        axisLine(floatArrayOf(cx,cy,cz + reach), floatArrayOf(.30f,.58f,1f,1f))
+        axisLine(floatArrayOf(cx,cy,cz + max(32f, max(item.sx, max(item.sy, item.sz)) * 1.8f)), floatArrayOf(.30f,.58f,1f,1f))
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
     }
 
