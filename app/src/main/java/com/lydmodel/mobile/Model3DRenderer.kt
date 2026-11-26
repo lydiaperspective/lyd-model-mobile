@@ -84,11 +84,23 @@ internal class ModelGLSurfaceView(
                     if (penMode && !activeInputIsStylus) {
                         sceneRenderer.orbitBy(dx * .45f, dy * .38f)
                     } else if (objectId != null && touchedResizeCorner != null) {
-                        val scale = 0.12f / sceneRenderer.currentZoom()
-                        val signs = sceneRenderer.resizeSigns(touchedResizeCorner!!)
-                        val world = sceneRenderer.screenDragToWorld(dx, dy)
-                        val dz = -dy * scale
-                        onResize(objectId, touchedResizeCorner!!, world.first * 0.55f, world.second * 0.55f, dz)
+                        val handle = touchedResizeCorner!!
+                        if (handle in 8..13) {
+                            // Face-center extrusion is locked to that face's single world axis.
+                            val amount = sceneRenderer.faceExtrudeDelta(handle, dx, dy, width, height)
+                            val delta = when (handle) {
+                                8, 9 -> floatArrayOf(amount, 0f, 0f)
+                                10, 11 -> floatArrayOf(0f, amount, 0f)
+                                else -> floatArrayOf(0f, 0f, amount)
+                            }
+                            onResize(objectId, handle, delta[0], delta[1], delta[2])
+                        } else {
+                            // Corner handles retain their three-connected-face resize behavior.
+                            val scale = 0.12f / sceneRenderer.currentZoom()
+                            val world = sceneRenderer.screenDragToWorld(dx, dy)
+                            val dz = -dy * scale
+                            onResize(objectId, handle, world.first * 0.55f, world.second * 0.55f, dz)
+                        }
                     } else if (objectId != null && touchedMoveAxis != null) {
                         val delta = sceneRenderer.axisDragDelta(touchedMoveAxis!!, dx, dy, width, height)
                         onMove(objectId, delta[0], delta[1], delta[2])
