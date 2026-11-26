@@ -102,6 +102,13 @@ private fun LydModelApp() {
                                 { selectedId = it },
                                 { id, dx, dy -> objects = objects.map { obj ->
                                     if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy) else obj
+                                } },
+                                { id, dx, dy, dz -> objects = objects.map { obj ->
+                                    if (obj.id == id) obj.copy(
+                                        sx = (obj.sx + dx).coerceAtLeast(0.1f),
+                                        sy = (obj.sy + dy).coerceAtLeast(0.1f),
+                                        sz = (obj.sz + dz).coerceAtLeast(0.1f)
+                                    ) else obj
                                 } }, showHints = true)
                         }
                     } else {
@@ -153,7 +160,7 @@ private fun LydModelApp() {
                                     objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
                                         0 -> o.copy(x = o.x + amount)
                                         1 -> o.copy(y = o.y + amount)
-                                        else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
+                                        else -> o.copy(z = o.z + amount)
                                     } }
                                 }, compact = compact)
                                 ShapeTray(onAdd = { kind ->
@@ -180,6 +187,13 @@ private fun LydModelApp() {
                                 { selectedId = it },
                                 { id, dx, dy -> objects = objects.map {
                                     if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
+                                } },
+                                { id, dx, dy, dz -> objects = objects.map { obj ->
+                                    if (obj.id == id) obj.copy(
+                                        sx = (obj.sx + dx).coerceAtLeast(0.1f),
+                                        sy = (obj.sy + dy).coerceAtLeast(0.1f),
+                                        sz = (obj.sz + dz).coerceAtLeast(0.1f)
+                                    ) else obj
                                 } })
                         }
                         if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
@@ -278,6 +292,7 @@ private fun TopBar(
 private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float,
     onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit,
+    onResize: (Long, Float, Float, Float) -> Unit = { _, _, _, _ -> },
     showHints: Boolean = true
 ) {
     var cameraPreset by remember { mutableIntStateOf(6) }
@@ -285,7 +300,7 @@ private fun ModelViewport(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
-                ModelGLSurfaceView(context, onSelect, onMove, onZoom).also {
+                ModelGLSurfaceView(context, onSelect, onMove, onResize, onZoom).also {
                     it.updateScene(objects, selectedId, cameraPreset, zoom)
                 }
             },
@@ -330,11 +345,16 @@ private fun Inspector(obj: ModelObject, onSize: (Int, Float) -> Unit, onDelete: 
         }
         Divider(color = Color(0xFF344252), modifier = Modifier.padding(vertical = 5.dp))
         Text("MOVE  •  1 MM NUDGE", color = Color(0xFF8EA0B5), fontSize = 10.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("X" to 0, "Y" to 1, "Z" to 2).forEach { (axis, index) ->
-                Text(axis, color = Color.White, fontSize = 11.sp)
-                OutlinedButton(onClick = { onNudge(index, -1f) }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("−") }
-                OutlinedButton(onClick = { onNudge(index, 1f) }, contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("+") }
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(axis, color = Color.White, fontSize = 11.sp)
+                    OutlinedButton(onClick = { onNudge(index, -1f) },
+                        modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)) { Text("−") }
+                    OutlinedButton(onClick = { onNudge(index, 1f) },
+                        modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)) { Text("+") }
+                }
             }
         }
         Text("Position: X ${obj.x.toInt()}  •  Y ${obj.y.toInt()}  •  Z ${obj.z.toInt()} mm",
