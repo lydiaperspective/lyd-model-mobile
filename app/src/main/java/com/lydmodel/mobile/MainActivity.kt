@@ -170,7 +170,7 @@ private fun LydModelApp() {
                                 } })
                             WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
                         }
-                        if (selected != null) Inspector(selected, { axis, value ->
+                        if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
                             objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
                                 0 -> o.copy(sx = value); 1 -> o.copy(sy = value); else -> o.copy(sz = value)
                             } }
