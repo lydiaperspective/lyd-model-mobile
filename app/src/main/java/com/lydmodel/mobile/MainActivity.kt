@@ -90,19 +90,19 @@ private fun LydModelApp() {
                 val compact = maxHeight < 520.dp
                 Column(Modifier.fillMaxSize()) {
                     if (fullScreen) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Column(Modifier.weight(1f).fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedButton(onClick = { fullScreen = false }) { Text("Exit focus") }
+                                Spacer(Modifier.width(8.dp))
+                                Button(onClick = { fullScreen = false; toolsExpanded = true }) { Text("Show tools") }
+                            }
                             ModelViewport(objects, selectedId, zoom,
                                 { zoom = (zoom * it).coerceIn(.35f, 3.5f) },
                                 { selectedId = it },
                                 { id, dx, dy -> objects = objects.map { obj ->
                                     if (obj.id == id) obj.copy(x = obj.x + dx, y = obj.y + dy) else obj
-                                } })
-                            Column(Modifier.align(Alignment.TopEnd).padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { fullScreen = false }) { Text("Exit focus") }
-                                Button(onClick = { fullScreen = false; toolsExpanded = true }) { Text("Show tools") }
-                            }
-                            WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
+                                } }, showHints = true)
                         }
                     } else {
                     TopBar(
@@ -127,7 +127,6 @@ private fun LydModelApp() {
                                         { id, dx, dy -> objects = objects.map {
                                             if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
                                         } })
-                                    WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
                                 }
                             }
                             if (toolsExpanded) {
@@ -182,7 +181,6 @@ private fun LydModelApp() {
                                 { id, dx, dy -> objects = objects.map {
                                     if (it.id == id) it.copy(x = it.x + dx, y = it.y + dy) else it
                                 } })
-                            WorkspaceHints(compact, Modifier.align(Alignment.BottomCenter))
                         }
                         if (toolsExpanded && selected != null) Inspector(selected, { axis, value ->
                             objects = objects.map { o -> if (o.id != selected.id) o else when(axis) {
@@ -254,7 +252,8 @@ private fun TopBar(
 @Composable
 private fun ModelViewport(
     objects: List<ModelObject>, selectedId: Long?, zoom: Float,
-    onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit
+    onZoom: (Float) -> Unit, onSelect: (Long?) -> Unit, onMove: (Long, Float, Float) -> Unit,
+    showHints: Boolean = true
 ) {
     var cameraPreset by remember { mutableIntStateOf(6) }
     Box(Modifier.fillMaxSize()) {
@@ -279,9 +278,12 @@ private fun ModelViewport(
             TextButton(onClick = { cameraPreset = 5 }) { Text("Bottom", color = Color.White, fontSize = 10.sp) }
             TextButton(onClick = { cameraPreset = 6 }) { Text("Home", color = Color(0xFF55D6BE), fontSize = 10.sp) }
         }
-        Text("DRAG EMPTY SPACE TO ORBIT  •  DRAG OBJECT TO MOVE  •  PINCH TO ZOOM",
-            Modifier.align(Alignment.BottomCenter).padding(10.dp),
-            color = Color(0xFF8D9CAF), fontSize = 9.sp)
+        if (showHints) {
+            Text("Drag empty space to orbit  •  Drag object to move  •  Pinch to zoom",
+                Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 10.dp)
+                    .background(Color(0xCC182331), RoundedCornerShape(20.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+                color = Color(0xFFB5C2D1), fontSize = 9.sp, maxLines = 1)
+        }
     }
 }
 
