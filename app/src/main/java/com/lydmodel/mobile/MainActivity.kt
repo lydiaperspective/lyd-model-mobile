@@ -50,8 +50,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class ShapeKind { CUBE, SPHERE, CYLINDER }
-private data class ModelObject(
+internal enum class ShapeKind { CUBE, SPHERE, CYLINDER }
+internal data class ModelObject(
     val id: Long, val kind: ShapeKind,
     val x: Float = 0f, val y: Float = 0f, val z: Float = 0f,
     val sx: Float = 20f, val sy: Float = 20f, val sz: Float = 20f
