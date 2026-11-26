@@ -233,18 +233,43 @@ private fun TopBar(
     compact: Boolean = false, toolsExpanded: Boolean, onToggleTools: () -> Unit,
     onToggleFullscreen: () -> Unit
 ) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 3.dp else 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = if (compact) 16.sp else 19.sp)
-            Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
+    if (compact) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = 19.sp, maxLines = 1)
+                    Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
+                }
+                Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 14.dp)) {
+                    Icon(Icons.Default.FileDownload, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp)); Text("STL")
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onToggleTools, contentPadding = PaddingValues(horizontal = 5.dp)) {
+                    Text(if (toolsExpanded) "Hide tools" else "Show tools", maxLines = 1)
+                }
+                TextButton(onClick = onToggleFullscreen, contentPadding = PaddingValues(horizontal = 5.dp)) { Text("Focus") }
+                IconButton(onClick = onUndo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
+                IconButton(onClick = onRedo, modifier = Modifier.size(38.dp)) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
+            }
         }
-        TextButton(onClick = onToggleTools) { Text(if (toolsExpanded) "Hide tools" else "Show tools") }
-        TextButton(onClick = onToggleFullscreen) { Text("Focus") }
-        IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
-        IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
-        Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 14.dp)) {
-            Icon(Icons.Default.FileDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("STL")
+    } else {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("LYD MODEL", color = Color.White, fontWeight = FontWeight.Black, fontSize = 19.sp, maxLines = 1)
+                Text("TOUCH 3D STUDIO", color = Color(0xFF55D6BE), fontSize = 8.sp, letterSpacing = 1.5.sp)
+            }
+            TextButton(onClick = onToggleTools) { Text(if (toolsExpanded) "Hide tools" else "Show tools") }
+            TextButton(onClick = onToggleFullscreen) { Text("Focus") }
+            IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Undo", tint = Color.LightGray) }
+            IconButton(onClick = onRedo) { Icon(Icons.Default.Redo, "Redo", tint = Color.LightGray) }
+            Button(onClick = onExport, contentPadding = PaddingValues(horizontal = 14.dp)) {
+                Icon(Icons.Default.FileDownload, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("STL")
+            }
         }
     }
 }
