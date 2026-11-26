@@ -168,6 +168,9 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     private var width = 1
     private var height = 1
     private var cameraDistance = 340f
+    @Volatile private var targetX = 0f
+    @Volatile private var targetY = 0f
+    @Volatile private var targetZ = 18f
     private val meshes = mutableMapOf<ShapeKind, GpuMesh>()
     private lateinit var grid: GpuMesh
 
@@ -189,6 +192,33 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         zoom = currentZoom.coerceIn(.35f, 3.5f)
     }
 
+    fun panBy(screenDx: Float, screenDy: Float, viewHeight: Int) {
+        if (viewHeight <= 0) return
+        val yawRad = Math.toRadians(yaw.toDouble())
+        val pitchRad = Math.toRadians(pitch.toDouble())
+        val distance = cameraDistance / zoom
+        val worldPerPixel = (2.0 * distance * tan(Math.toRadians(22.5)) / viewHeight).toFloat()
+        val rightX = cos(yawRad).toFloat()
+        val rightY = sin(yawRad).toFloat()
+        val upX = (-sin(pitchRad) * sin(yawRad)).toFloat()
+        val upY = (sin(pitchRad) * cos(yawRad)).toFloat()
+        val upZ = cos(pitchRad).toFloat()
+        targetX -= (rightX * screenDx + upX * -screenDy) * worldPerPixel
+        targetY -= (rightY * screenDx + upY * -screenDy) * worldPerPixel
+        targetZ -= upZ * -screenDy * worldPerPixel
+    }
+
+    fun focusOn(id: Long?): Boolean {
+        val item = objects.firstOrNull { it.id == id } ?: return false
+        targetX = item.x
+        targetY = item.y
+        targetZ = item.z + item.sz / 2f
+        val extent = max(item.sx, max(item.sy, item.sz))
+        cameraDistance = (extent * 3.4f).coerceIn(65f, 1200f)
+        zoom = 1f
+        return true
+    }
+
     fun orbitBy(dx: Float, dy: Float) {
         yaw = (yaw + dx) % 360f
         pitch = (pitch - dy).coerceIn(-89f, 89f)
@@ -207,7 +237,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val eye = cameraEye()
         val look = FloatArray(16); val proj = FloatArray(16); val vp = FloatArray(16)
         val up = if (abs(pitch) > 85f) floatArrayOf(0f,1f,0f) else floatArrayOf(0f,0f,1f)
-        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],0f,0f,18f,up[0],up[1],up[2])
+        Matrix.setLookAtM(look,0,eye[0],eye[1],eye[2],targetX,targetY,targetZ,up[0],up[1],up[2])
         Matrix.perspectiveM(proj,0,45f,viewWidth.toFloat()/viewHeight,.1f,5000f)
         Matrix.multiplyMM(vp,0,proj,0,look,0)
         val clip=FloatArray(4); Matrix.multiplyMV(clip,0,vp,0,floatArrayOf(point[0],point[1],point[2],1f),0)
@@ -324,7 +354,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
 
     fun pick(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Long? {
         if (viewWidth <= 0 || viewHeight <= 0) return null
-        val target = floatArrayOf(0f, 0f, 18f)
+        val target = floatArrayOf(targetX, targetY, targetZ)
         val eye = cameraEye()
         val look = FloatArray(16)
         val proj = FloatArray(16)
@@ -351,9 +381,9 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val pitchRad = Math.toRadians(pitch.toDouble())
         val distance = cameraDistance / zoom
         return floatArrayOf(
-            (distance * cos(pitchRad) * sin(yawRad)).toFloat(),
-            (-distance * cos(pitchRad) * cos(yawRad)).toFloat(),
-            18f + (distance * sin(pitchRad)).toFloat()
+            targetX + (distance * cos(pitchRad) * sin(yawRad)).toFloat(),
+            targetY + (-distance * cos(pitchRad) * cos(yawRad)).toFloat(),
+            targetZ + (distance * sin(pitchRad)).toFloat()
         )
     }
 
@@ -387,7 +417,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         GLES20.glUseProgram(program)
         val eye = cameraEye()
         val up = if (abs(pitch) > 85f) floatArrayOf(0f, 1f, 0f) else floatArrayOf(0f, 0f, 1f)
-        Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], 0f, 0f, 18f, up[0], up[1], up[2])
+        Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], targetX, targetY, targetZ, up[0], up[1], up[2])
         Matrix.multiplyMM(viewProjection, 0, projection, 0, view, 0)
         GLES20.glUniform3f(lightHandle, -.4f, -.5f, 1f)
 
