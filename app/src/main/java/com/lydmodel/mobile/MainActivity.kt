@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -24,6 +25,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
@@ -59,7 +62,9 @@ internal enum class ShapeKind { CUBE, SPHERE, CYLINDER }
 internal data class ModelObject(
     val id: Long, val kind: ShapeKind,
     val x: Float = 0f, val y: Float = 0f, val z: Float = 0f,
-    val sx: Float = 20f, val sy: Float = 20f, val sz: Float = 20f
+    val sx: Float = 20f, val sy: Float = 20f, val sz: Float = 20f,
+    val name: String = kind.name.lowercase().replaceFirstChar { it.uppercase() },
+    val visible: Boolean = true
 )
 
 @Composable
@@ -164,7 +169,8 @@ private fun LydModelApp() {
                                     objects = objects.filterNot { it.id == selected.id }
                                     selectedId = objects.lastOrNull()?.id
                                 }, {
-                                    val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
+                                    val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f,
+                                        name = "${selected.name} copy")
                                     objects = objects + copy
                                     selectedId = copy.id
                                 }, { axis, amount ->
@@ -174,8 +180,14 @@ private fun LydModelApp() {
                                         else -> o.copy(z = o.z + amount)
                                     } }
                                 }, compact = compact, onFocusShape = { requestCamera(selected.id) })
+                                LayersPanel(objects, selectedId, { selectedId = it }, { id, visible ->
+                                    objects = objects.map { if (it.id == id) it.copy(visible = visible) else it }
+                                }, { id ->
+                                    objects = objects.filterNot { it.id == id }
+                                    if (selectedId == id) selectedId = objects.lastOrNull()?.id
+                                })
                                 ShapeTray(onAdd = { kind ->
-                                    val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
+                                    val obj = newShape(kind, objects, nextId++, objects.size)
                                     objects = objects + obj; selectedId = obj.id
                                     status = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} added"
                                 }, compact = compact)
@@ -206,7 +218,8 @@ private fun LydModelApp() {
                             objects = objects.filterNot { it.id == selected.id }
                             selectedId = objects.lastOrNull()?.id
                         }, {
-                            val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f)
+                            val copy = selected.copy(id = nextId++, x = selected.x + 8f, y = selected.y + 8f,
+                                name = "${selected.name} copy")
                             objects = objects + copy; selectedId = copy.id
                         }, { axis, amount ->
                             objects = objects.map { o -> if (o.id != selected.id) o else when (axis) {
@@ -215,8 +228,14 @@ private fun LydModelApp() {
                                 else -> o.copy(z = (o.z + amount).coerceAtLeast(0f))
                             } }
                         }, compact = compact, onFocusShape = { requestCamera(selected.id) })
+                        if (toolsExpanded) LayersPanel(objects, selectedId, { selectedId = it }, { id, visible ->
+                            objects = objects.map { if (it.id == id) it.copy(visible = visible) else it }
+                        }, { id ->
+                            objects = objects.filterNot { it.id == id }
+                            if (selectedId == id) selectedId = objects.lastOrNull()?.id
+                        })
                         if (toolsExpanded) ShapeTray(onAdd = { kind ->
-                            val obj = ModelObject(nextId++, kind, x = (objects.size % 4) * 5f)
+                            val obj = newShape(kind, objects, nextId++, objects.size)
                             objects = objects + obj; selectedId = obj.id
                             status = kind.name.lowercase().replaceFirstChar { it.uppercase() } + " added"
                         }, compact = compact)
@@ -242,6 +261,65 @@ private fun resizeFromHandle(obj: ModelObject, handle: Int, dx: Float, dy: Float
         x=obj.x + sxSign * actualX / 2f,
         y=obj.y + sySign * actualY / 2f,
         z=obj.z + szSign * actualZ / 2f)
+}
+
+private fun newShape(kind: ShapeKind, objects: List<ModelObject>, id: Long, index: Int): ModelObject {
+    val ordinal = objects.count { it.kind == kind } + 1
+    return ModelObject(id, kind, x = (index % 4) * 5f,
+        name = "${kind.name.lowercase().replaceFirstChar { it.uppercase() }} $ordinal")
+}
+
+@Composable
+private fun LayersPanel(
+    objects: List<ModelObject>, selectedId: Long?, onSelect: (Long) -> Unit,
+    onVisibilityChange: (Long, Boolean) -> Unit, onDelete: (Long) -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)
+        .background(Color(0xFF1A2532), RoundedCornerShape(16.dp)).padding(10.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("SHAPES", color = Color(0xFF8EA0B5), fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, modifier = Modifier.weight(1f))
+            Text("${objects.size}", color = Color(0xFF8292A6), fontSize = 10.sp)
+        }
+        if (objects.isEmpty()) {
+            Text("Add a shape to get started", color = Color(0xFF8292A6), fontSize = 11.sp,
+                modifier = Modifier.padding(6.dp))
+        } else {
+            Column(Modifier.heightIn(max = 210.dp).verticalScroll(rememberScrollState())) {
+                objects.asReversed().forEach { shape ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        .background(if (shape.id == selectedId) Color(0xFF293B4C) else Color.Transparent,
+                            RoundedCornerShape(10.dp))
+                        .clickable { onSelect(shape.id) }
+                        .padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(25.dp).background(Color(0xFF34485C), RoundedCornerShape(7.dp)),
+                            contentAlignment = Alignment.Center) {
+                            Text(shape.name.firstOrNull()?.uppercase() ?: "S", color = Color(0xFF55D6BE),
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                            Text(shape.name, color = if (shape.visible) Color.White else Color(0xFF8292A6),
+                                fontSize = 12.sp, maxLines = 1)
+                            Text(shape.kind.name.lowercase().replaceFirstChar { it.uppercase() },
+                                color = Color(0xFF8292A6), fontSize = 9.sp, maxLines = 1)
+                        }
+                        IconButton(onClick = { onVisibilityChange(shape.id, !shape.visible) },
+                            modifier = Modifier.size(34.dp)) {
+                            Icon(if (shape.visible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                if (shape.visible) "Hide ${shape.name}" else "Show ${shape.name}",
+                                tint = Color(0xFFB5C6DA), modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { onDelete(shape.id) }, modifier = Modifier.size(34.dp)) {
+                            Icon(Icons.Default.Delete, "Delete ${shape.name}", tint = Color(0xFF8292A6),
+                                modifier = Modifier.size(17.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -468,7 +546,7 @@ private fun ShapeTray(onAdd: (ShapeKind) -> Unit, compact: Boolean = false) {
 private object StlExporter {
     fun export(objects: List<ModelObject>): String = buildString {
         appendLine("solid lyd_model")
-        objects.forEach { obj ->
+        objects.filter { it.visible }.forEach { obj ->
             val facets = when(obj.kind) { ShapeKind.CUBE -> cube(obj); ShapeKind.SPHERE -> sphere(obj); ShapeKind.CYLINDER -> cylinder(obj) }
             facets.forEach { t ->
                 val n = normal(t[0],t[1],t[2])

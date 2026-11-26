@@ -83,11 +83,15 @@ internal class ModelGLSurfaceView(
                 downX = event.x; downY = event.y
                 moved = false
                 val canEdit = !penMode || activeInputIsStylus
-                touchedObject = if (canEdit) sceneRenderer.pick(event.x, event.y, width, height) else null
-                touchedResizeCorner = if (canEdit && activeInputIsStylus)
-                    sceneRenderer.pickResizeHandle(event.x, event.y, width, height) else null
-                touchedMoveAxis = if (canEdit && activeInputIsStylus && touchedResizeCorner == null)
-                    sceneRenderer.pickMoveAxis(event.x, event.y, width, height) else null
+                val pickedObject = if (canEdit) sceneRenderer.pick(event.x, event.y, width, height) else null
+                val handleHitRadius = 24f * resources.displayMetrics.density
+                val axisHitRadius = 20f * resources.displayMetrics.density
+                touchedResizeCorner = if (canEdit)
+                    sceneRenderer.pickResizeHandle(event.x, event.y, width, height, handleHitRadius) else null
+                touchedMoveAxis = if (canEdit && touchedResizeCorner == null)
+                    sceneRenderer.pickMoveAxis(event.x, event.y, width, height, axisHitRadius) else null
+                touchedObject = if (touchedResizeCorner != null || touchedMoveAxis != null)
+                    sceneRenderer.selectedObjectId() else pickedObject
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 activePointers = event.pointerCount
@@ -264,11 +268,12 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         val dx = (rightX * screenDx + upX * -screenDy) * worldPerPixel * panSensitivity
         val dy = (rightY * screenDx + upY * -screenDy) * worldPerPixel * panSensitivity
         val dz = upZ * -screenDy * worldPerPixel * panSensitivity
-        moveTarget(dx.coerceIn(-maxStep, maxStep), dy.coerceIn(-maxStep, maxStep), dz.coerceIn(-maxStep, maxStep))
+        // Move the camera target with the gesture so viewport panning follows the drag.
+        moveTarget(-dx.coerceIn(-maxStep, maxStep), -dy.coerceIn(-maxStep, maxStep), -dz.coerceIn(-maxStep, maxStep))
     }
 
     fun focusOn(id: Long?): Boolean {
-        val item = objects.firstOrNull { it.id == id } ?: return false
+        val item = objects.firstOrNull { it.id == id && it.visible } ?: return false
         targetX = item.x
         targetY = item.y
         targetZ = item.z + item.sz / 2f
@@ -279,14 +284,15 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     }
 
     fun recenter() {
-        if (objects.isEmpty()) {
+        val visibleObjects = objects.filter { it.visible }
+        if (visibleObjects.isEmpty()) {
             targetX = 0f; targetY = 0f; targetZ = 18f
             cameraDistance = 340f
             return
         }
-        val minX = objects.minOf { it.x - it.sx / 2f }; val maxX = objects.maxOf { it.x + it.sx / 2f }
-        val minY = objects.minOf { it.y - it.sy / 2f }; val maxY = objects.maxOf { it.y + it.sy / 2f }
-        val minZ = objects.minOf { it.z }; val maxZ = objects.maxOf { it.z + it.sz }
+        val minX = visibleObjects.minOf { it.x - it.sx / 2f }; val maxX = visibleObjects.maxOf { it.x + it.sx / 2f }
+        val minY = visibleObjects.minOf { it.y - it.sy / 2f }; val maxY = visibleObjects.maxOf { it.y + it.sy / 2f }
+        val minZ = visibleObjects.minOf { it.z }; val maxZ = visibleObjects.maxOf { it.z + it.sz }
         targetX = (minX + maxX) / 2f; targetY = (minY + maxY) / 2f; targetZ = (minZ + maxZ) / 2f
         val extent = max(maxX - minX, max(maxY - minY, maxZ - minZ)).coerceAtLeast(20f)
         val aspect = width.toFloat() / height.coerceAtLeast(1)
@@ -294,22 +300,24 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     }
 
     private fun sceneSpan(): Float {
-        if (objects.isEmpty()) return 1000f
-        val spanX = objects.maxOf { it.x + it.sx / 2f } - objects.minOf { it.x - it.sx / 2f }
-        val spanY = objects.maxOf { it.y + it.sy / 2f } - objects.minOf { it.y - it.sy / 2f }
-        val spanZ = objects.maxOf { it.z + it.sz } - objects.minOf { it.z }
-        val largestShape = objects.maxOf { max(it.sx, max(it.sy, it.sz)) }
+        val visibleObjects = objects.filter { it.visible }
+        if (visibleObjects.isEmpty()) return 1000f
+        val spanX = visibleObjects.maxOf { it.x + it.sx / 2f } - visibleObjects.minOf { it.x - it.sx / 2f }
+        val spanY = visibleObjects.maxOf { it.y + it.sy / 2f } - visibleObjects.minOf { it.y - it.sy / 2f }
+        val spanZ = visibleObjects.maxOf { it.z + it.sz } - visibleObjects.minOf { it.z }
+        val largestShape = visibleObjects.maxOf { max(it.sx, max(it.sy, it.sz)) }
         return max(100f, max(largestShape, max(spanX, max(spanY, spanZ))))
     }
 
     private fun moveTarget(dx: Float, dy: Float, dz: Float) {
         val span = sceneSpan()
-        val minX = (objects.minOfOrNull { it.x - it.sx / 2f } ?: -span) - span
-        val maxX = (objects.maxOfOrNull { it.x + it.sx / 2f } ?: span) + span
-        val minY = (objects.minOfOrNull { it.y - it.sy / 2f } ?: -span) - span
-        val maxY = (objects.maxOfOrNull { it.y + it.sy / 2f } ?: span) + span
-        val minZ = (objects.minOfOrNull { it.z } ?: -span) - span
-        val maxZ = (objects.maxOfOrNull { it.z + it.sz } ?: span) + span
+        val visibleObjects = objects.filter { it.visible }
+        val minX = (visibleObjects.minOfOrNull { it.x - it.sx / 2f } ?: -span) - span
+        val maxX = (visibleObjects.maxOfOrNull { it.x + it.sx / 2f } ?: span) + span
+        val minY = (visibleObjects.minOfOrNull { it.y - it.sy / 2f } ?: -span) - span
+        val maxY = (visibleObjects.maxOfOrNull { it.y + it.sy / 2f } ?: span) + span
+        val minZ = (visibleObjects.minOfOrNull { it.z } ?: -span) - span
+        val maxZ = (visibleObjects.maxOfOrNull { it.z + it.sz } ?: span) + span
         targetX = (targetX + dx).coerceIn(minX, maxX)
         targetY = (targetY + dy).coerceIn(minY, maxY)
         targetZ = (targetZ + dz).coerceIn(minZ, maxZ)
@@ -323,10 +331,12 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     fun screenDragToWorld(dx: Float, dy: Float): Pair<Float, Float> {
         val a = Math.toRadians(yaw.toDouble())
         val scale = 1.7f / zoom
-        val wx = (dx * cos(a) - dy * sin(a)) * scale
-        val wy = (-dx * sin(a) - dy * cos(a)) * scale
+        val wx = (dx * cos(a) + dy * sin(a)) * scale
+        val wy = (dx * sin(a) - dy * cos(a)) * scale
         return wx.toFloat() to wy.toFloat()
     }
+
+    fun selectedObjectId(): Long? = selectedId?.takeIf { id -> objects.any { it.id == id && it.visible } }
 
 
     private fun projectPoint(point: FloatArray, viewWidth: Int, viewHeight: Int): FloatArray? {
@@ -341,8 +351,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         return floatArrayOf((clip[0]/clip[3]+1f)*.5f*viewWidth,(1f-clip[1]/clip[3])*.5f*viewHeight)
     }
 
-    fun pickMoveAxis(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Int? {
-        val item=objects.firstOrNull { it.id==selectedId } ?: return null
+    fun pickMoveAxis(x: Float, y: Float, viewWidth: Int, viewHeight: Int, hitRadius: Float): Int? {
+        val item=objects.firstOrNull { it.id==selectedId && it.visible } ?: return null
         if(viewWidth<=0 || viewHeight<=0) return null
         val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
         val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
@@ -355,12 +365,12 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             if(len2<100f) return@mapIndexedNotNull null
             val t=(((x-origin[0])*vx+(y-origin[1])*vy)/len2).coerceIn(0f,1f)
             val dist=hypot(x-(origin[0]+t*vx),y-(origin[1]+t*vy))
-            if(t>.12f && dist<22f) axis to dist else null
+            if(t>.12f && dist<hitRadius) axis to dist else null
         }.minByOrNull { it.second }?.first
     }
 
     fun axisDragDelta(axis: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): FloatArray {
-        val item=objects.firstOrNull { it.id==selectedId } ?: return floatArrayOf(0f,0f,0f)
+        val item=objects.firstOrNull { it.id==selectedId && it.visible } ?: return floatArrayOf(0f,0f,0f)
         if(viewWidth<=0 || viewHeight<=0) return floatArrayOf(0f,0f,0f)
         val cx=item.x; val cy=item.y; val cz=item.z+item.sz/2f
         val reach=max(12f,max(item.sx,max(item.sy,item.sz))*.9f)
@@ -379,7 +389,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
      * single world axis. Perpendicular finger/stylus drift is discarded.
      */
     fun faceExtrudeDelta(handle: Int, dx: Float, dy: Float, viewWidth: Int, viewHeight: Int): Float {
-        val item = objects.firstOrNull { it.id == selectedId } ?: return 0f
+        val item = objects.firstOrNull { it.id == selectedId && it.visible } ?: return 0f
         if (handle !in 8..13 || viewWidth <= 0 || viewHeight <= 0) return 0f
 
         val centerX = item.x
@@ -414,8 +424,8 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         12 -> floatArrayOf(0f,0f,-1f); else -> floatArrayOf(0f,0f,1f)
     }
 
-    fun pickResizeHandle(x: Float, y: Float, viewWidth: Int, viewHeight: Int): Int? {
-        val item = objects.firstOrNull { it.id == selectedId } ?: return null
+    fun pickResizeHandle(x: Float, y: Float, viewWidth: Int, viewHeight: Int, hitRadius: Float): Int? {
+        val item = objects.firstOrNull { it.id == selectedId && it.visible } ?: return null
         if (viewWidth <= 0 || viewHeight <= 0) return null
         val x0=item.x-item.sx/2; val x1=item.x+item.sx/2
         val y0=item.y-item.sy/2; val y1=item.y+item.sy/2
@@ -439,7 +449,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
                 val sx=(clip[0]/clip[3]+1f)*.5f*viewWidth
                 val sy=(1f-clip[1]/clip[3])*.5f*viewHeight
                 val distance=hypot(sx-x,sy-y)
-                if (distance <= 29f) index to distance else null
+                if (distance <= hitRadius) index to distance else null
             }
         }.minByOrNull { it.second }?.first
     }
@@ -460,6 +470,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         Matrix.perspectiveM(proj, 0, 45f, viewWidth.toFloat() / viewHeight, .1f, 5000f)
         Matrix.multiplyMM(vp, 0, proj, 0, look, 0)
         return objects.asReversed().firstOrNull { item ->
+            if (!item.visible) return@firstOrNull false
             val point = floatArrayOf(item.x, item.y, item.z + item.sz / 2f, 1f)
             val clip = FloatArray(4)
             Matrix.multiplyMV(clip, 0, vp, 0, point, 0)
@@ -523,6 +534,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
         drawMesh(grid, floatArrayOf(.15f, .20f, .26f, 1f), false)
 
         objects.forEach { item ->
+            if (!item.visible) return@forEach
             Matrix.setIdentityM(model, 0)
             Matrix.translateM(model, 0, item.x, item.y, item.z + item.sz / 2f)
             Matrix.scaleM(model, 0, item.sx, item.sy, item.sz)
