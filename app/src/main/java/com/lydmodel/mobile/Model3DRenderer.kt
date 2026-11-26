@@ -96,6 +96,8 @@ internal class ModelGLSurfaceView(
                         // Body dragging remains restricted to the workplane (XY); it never changes height.
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
                         onMove(objectId, world.first, world.second, 0f)
+                    } else if (penMode && activeInputIsStylus) {
+                        // In Pen Mode, stylus input edits objects only; it never orbits the camera.
                     } else {
                         sceneRenderer.orbitBy(dx * .45f, dy * .38f)
                     }
