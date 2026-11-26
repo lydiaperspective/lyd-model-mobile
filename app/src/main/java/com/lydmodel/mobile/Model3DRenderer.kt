@@ -34,6 +34,8 @@ internal class ModelGLSurfaceView(
     private var touchedObject: Long? = null
     private var touchedResizeCorner: Int? = null
     private var touchedMoveAxis: Int? = null
+    @Volatile private var penMode = false
+    private var activeInputIsStylus = false
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -50,21 +52,27 @@ internal class ModelGLSurfaceView(
         preserveEGLContextOnPause = true
     }
 
-    fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float) {
+    fun updateScene(objects: List<ModelObject>, selectedId: Long?, preset: Int, zoom: Float, penMode: Boolean) {
         sceneRenderer.updateScene(objects, selectedId, preset, zoom)
+        this.penMode = penMode
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                activeInputIsStylus = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS ||
+                    event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
                 activePointers = 1
                 previousX = event.x; previousY = event.y
                 downX = event.x; downY = event.y
                 moved = false
-                touchedObject = sceneRenderer.pick(event.x, event.y, width, height)
-                touchedResizeCorner = sceneRenderer.pickResizeHandle(event.x, event.y, width, height)
-                touchedMoveAxis = if (touchedResizeCorner == null) sceneRenderer.pickMoveAxis(event.x, event.y, width, height) else null
+                val canEdit = !penMode || activeInputIsStylus
+                touchedObject = if (canEdit) sceneRenderer.pick(event.x, event.y, width, height) else null
+                touchedResizeCorner = if (canEdit && activeInputIsStylus)
+                    sceneRenderer.pickResizeHandle(event.x, event.y, width, height) else null
+                touchedMoveAxis = if (canEdit && activeInputIsStylus && touchedResizeCorner == null)
+                    sceneRenderer.pickMoveAxis(event.x, event.y, width, height) else null
             }
             MotionEvent.ACTION_POINTER_DOWN -> activePointers = event.pointerCount
             MotionEvent.ACTION_MOVE -> {
@@ -73,7 +81,9 @@ internal class ModelGLSurfaceView(
                     val dy = event.y - previousY
                     if (abs(event.x - downX) + abs(event.y - downY) > 12f) moved = true
                     val objectId = touchedObject
-                    if (objectId != null && touchedResizeCorner != null) {
+                    if (penMode && !activeInputIsStylus) {
+                        sceneRenderer.orbitBy(dx * .45f, dy * .38f)
+                    } else if (objectId != null && touchedResizeCorner != null) {
                         val scale = 0.12f / sceneRenderer.currentZoom()
                         val signs = sceneRenderer.resizeSigns(touchedResizeCorner!!)
                         val world = sceneRenderer.screenDragToWorld(dx, dy)
@@ -100,7 +110,7 @@ internal class ModelGLSurfaceView(
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (!moved && !scaleDetector.isInProgress) {
+                if (!moved && !scaleDetector.isInProgress && (!penMode || activeInputIsStylus)) {
                     val picked = sceneRenderer.pick(event.x, event.y, width, height)
                     post { onSelect(picked) }
                 }
@@ -108,9 +118,10 @@ internal class ModelGLSurfaceView(
                 touchedObject = null
                 touchedResizeCorner = null
                 touchedMoveAxis = null
+                activeInputIsStylus = false
                 performClick()
             }
-            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null }
+            MotionEvent.ACTION_CANCEL -> { activePointers = 0; touchedObject = null; touchedResizeCorner = null; touchedMoveAxis = null; activeInputIsStylus = false }
         }
         return true
     }
