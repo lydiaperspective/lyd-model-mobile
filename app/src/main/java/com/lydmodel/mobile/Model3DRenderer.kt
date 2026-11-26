@@ -420,6 +420,7 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
     companion object {
         private const val VERTEX_SHADER = """
             uniform mat4 uMvp;
+            uniform float uPointSize;
             attribute vec3 aPosition;
             attribute vec3 aNormal;
             varying vec3 vNormal;
@@ -433,7 +434,6 @@ private class ModelSceneRenderer : GLSurfaceView.Renderer {
             precision mediump float;
             uniform vec4 uColor;
             uniform vec3 uLight;
-            uniform float uPointSize;
             varying vec3 vNormal;
             void main() {
                 float diffuse = max(dot(normalize(vNormal), normalize(uLight)), 0.0);
