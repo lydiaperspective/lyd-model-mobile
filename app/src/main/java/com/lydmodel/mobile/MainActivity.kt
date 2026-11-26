@@ -826,7 +826,7 @@ private fun ShapeTray(onAdd: (ShapeKind) -> Unit, compact: Boolean = false) {
     }
 }
 
-private object StlExporter {
+internal object StlExporter {
     fun export(objects: List<ModelObject>): String = buildString {
         appendLine("solid lyd_model")
         val merged = objects.filter { it.mergeId != null }.groupBy { it.mergeId }

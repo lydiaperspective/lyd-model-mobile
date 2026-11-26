@@ -100,7 +100,7 @@ internal object CsgBoolean {
         val solids = objects.filter { it.visible && !it.hollow }
         val holes = objects.filter { it.visible && it.hollow }
         if (solids.isEmpty()) return emptyList()
-        var result = polygons(solids.first())
+        var result = polygons(listOf(solids.first()))
         solids.drop(1).forEach { result = union(result, polygons(listOf(it))) }
         holes.forEach { result = subtract(result, polygons(listOf(it))) }
         return result.flatMap { it.triangles() }.filter { tri ->
