@@ -4,7 +4,10 @@ A touchscreen-first Android 3D modelling app focused on printable designs and ST
 
 ## Current MVP
 - Kotlin + Jetpack Compose, Android 16 target (API 36), min API 26.
-- Touch-oriented editor layout with an isometric projected workspace.
+- Touch-oriented, responsive editor layout with an isometric projected workspace.
+- Collapsible tools panel for a less cluttered canvas.
+- Adjustable side-panel width on wider layouts.
+- Full-screen focus mode that keeps the model workspace front and centre.
 - Add cube, sphere and cylinder primitives.
 - Select and drag objects on the workplane; pinch to zoom.
 - Adjust width, depth and height in millimetres.
@@ -12,7 +15,7 @@ A touchscreen-first Android 3D modelling app focused on printable designs and ST
 - Export combined geometry as an ASCII STL using Android's document picker.
 
 ## Build
-Open this repository in Android Studio with JDK 17 and Android Gradle Plugin 8.7.3. Allow Gradle sync, then run the app on an Android device or emulator with API 26+.
+Open this repository in Android Studio with JDK 17 and Android Gradle Plugin 8.9.1. Allow Gradle sync, then run the app on an Android device or emulator with API 26+.
 
 ## Roadmap
 1. True perspective 3D viewport with orbit/pan controls and grid snapping.
